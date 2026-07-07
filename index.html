@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scrapyard Derby: Survival Gauntlet</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="game-container">
+  <canvas id="game" width="1280" height="720"></canvas>
+
+  <div id="start-screen" class="overlay">
+    <h1>SCRAPYARD DERBY</h1>
+    <h2>SURVIVAL GAUNTLET</h2>
+    <p class="kbd-only">WASD / Arrow keys to drive &nbsp;&bull;&nbsp; hold SPACE to handbrake-drift &nbsp;&bull;&nbsp; LEFT CLICK / F to fire &nbsp;&bull;&nbsp; ESC to pause</p>
+    <p class="touch-only">Left stick to drive &nbsp;&bull;&nbsp; DRIFT to handbrake &nbsp;&bull;&nbsp; FIRE to shoot</p>
+    <p>Choose your gauntlet.</p>
+    <div id="mode-select">
+      <button id="start-gauntlet-btn">SURVIVAL GAUNTLET
+        <span class="mode-sub">Round-based survival &mdash; clear waves, upgrade, don't die</span>
+      </button>
+      <button id="start-arena-btn">SCRAPYARD ARENA
+        <span class="mode-sub">Open-world FFA &mdash; level up, loot parts off wrecks</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="weapon-select" class="overlay hidden">
+    <h1>CHOOSE YOUR WEAPON</h1>
+    <p>Your starting loadout &mdash; scavenge more from the wrecks you make.</p>
+    <div id="weapon-grid"></div>
+    <button id="weapon-back-btn">BACK</button>
+  </div>
+
+  <div id="pause-screen" class="overlay hidden">
+    <h1>PAUSED</h1>
+    <button id="resume-btn">RESUME</button>
+    <button id="guide-btn">FIELD GUIDE</button>
+    <button id="options-btn">OPTIONS</button>
+    <button id="main-menu-btn">MAIN MENU</button>
+    <p class="keycap-hint">or press ESC to resume</p>
+  </div>
+
+  <div id="options-screen" class="overlay hidden">
+    <h1>OPTIONS</h1>
+    <div class="options-row">
+      <label for="volume-slider">MASTER VOLUME</label>
+      <input type="range" id="volume-slider" min="0" max="100" value="50">
+      <span id="volume-value">50%</span>
+    </div>
+    <button id="options-back-btn">BACK</button>
+  </div>
+
+  <div id="guide-screen" class="overlay hidden">
+    <h1>FIELD GUIDE</h1>
+    <p>Enemies encountered this run</p>
+    <div id="guide-grid"></div>
+    <button id="guide-back-btn">BACK</button>
+  </div>
+
+  <div id="intermission" class="hidden">
+    <div id="shop" class="hidden">
+      <div id="shop-header">
+        <span>SCRAPYARD SHOP</span>
+        <span id="salvage-display">SALVAGE: 0</span>
+      </div>
+      <div id="shop-tabs"></div>
+      <div id="shop-grid"></div>
+    </div>
+    <div id="round-over-panel">
+      <div id="round-over-title">ROUND 1 OVER</div>
+      <button id="next-round-btn">START NEXT ROUND (N)</button>
+      <button id="open-shop-btn">SHOP (B)</button>
+    </div>
+  </div>
+
+  <button id="shop-toggle" class="hidden">
+    <span>SHOP</span>
+    <span class="keycap">B</span>
+  </button>
+
+  <!-- shown on touch devices held in portrait: the game is landscape -->
+  <div id="rotate-hint">
+    <div>ROTATE YOUR PHONE<br><small>Scrapyard Derby plays in landscape</small></div>
+  </div>
+
+  <!-- virtual controls, shown only on touch devices (body.touch-mode) -->
+  <div id="touch-controls">
+    <div id="joystick-zone"><div id="joystick-stick"></div></div>
+    <button id="touch-fire" class="touch-btn">FIRE</button>
+    <button id="touch-drift" class="touch-btn">DRIFT</button>
+    <button id="touch-pause" class="touch-btn">II</button>
+  </div>
+
+  <!-- Arena: spend stat points on level-up (appears when points are banked;
+       tappable on touch, or desktop keys 1-4). Non-blocking — the world runs. -->
+  <div id="arena-stats" class="hidden">
+    <div id="stat-prompt-txt">SPEND POINTS</div>
+    <div class="stat-row">
+      <button class="stat-btn" id="stat-health" data-stat="health">HEALTH</button>
+      <button class="stat-btn" id="stat-speed" data-stat="speed">SPEED</button>
+      <button class="stat-btn" id="stat-reload" data-stat="reload">RELOAD</button>
+      <button class="stat-btn" id="stat-durability" data-stat="durability">DURABILITY</button>
+      <button class="stat-btn" id="stat-regen" data-stat="regen">REGEN</button>
+    </div>
+  </div>
+
+  <!-- Arena: modular loadout / equip panel. Auto-shows when parts are
+       collectible nearby, or toggled with the PARTS button / L key. Lists your
+       5 slots + nearby drops; tap/click a nearby part to equip it. -->
+  <div id="arena-loadout" class="hidden">
+    <div class="lo-title">LOADOUT</div>
+    <div id="lo-slots"></div>
+    <div id="lo-nearby"></div>
+  </div>
+  <button id="loadout-toggle" class="hidden">
+    <span>PARTS</span>
+    <span class="keycap">L</span>
+  </button>
+
+  <!-- Arena: death menu — the world keeps running behind it -->
+  <div id="death-menu" class="overlay hidden">
+    <h1>WRECKED</h1>
+    <button id="death-respawn-btn">RESPAWN</button>
+    <button id="death-spectate-btn">SPECTATE</button>
+    <button id="death-mainmenu-btn">MAIN MENU</button>
+  </div>
+  <!-- Arena: spectate controls (follow-cam on bots; NEXT cycles) -->
+  <div id="spectate-ui" class="hidden">
+    <button id="spectate-next-btn">NEXT BOT<span class="keycap">N</span></button>
+    <button id="spectate-respawn-btn">RESPAWN</button>
+    <button id="spectate-menu-btn">MAIN MENU</button>
+  </div>
+
+  <div id="gameover-screen" class="overlay hidden">
+    <h1>WRECKED</h1>
+    <div id="final-stats"></div>
+    <button id="restart-btn">RUN IT BACK<span class="kbd-only">&nbsp;(R)</span></button>
+  </div>
+</div>
+
+<!-- Classic scripts (no modules) so the game runs straight from file:// with no server. Order matters. -->
+<script src="js/utils.js"></script>
+<script src="js/rng.js"></script>
+<script src="js/input.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/particles.js"></script>
+<script src="js/entities/projectile.js"></script>
+<script src="js/entities/scrap.js"></script>
+<script src="js/entities/car.js"></script>
+<script src="js/entities/player.js"></script>
+<script src="js/entities/enemy.js"></script>
+<script src="js/waves.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/upgrades.js"></script>
+<script src="js/game.js"></script>
+<script src="js/arena/arena-parts.js"></script>
+<script src="js/arena/arena-render.js"></script>
+<script src="js/arena/arena-bot.js"></script>
+<script src="js/arena/arena-boss.js"></script>
+<script src="js/arena/arena.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,879 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: #15130f;
+  overflow: hidden;
+  overscroll-behavior: none; /* no pull-to-refresh over the game */
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* touch devices: no text selection or long-press callouts on game chrome,
+   and keyboard hints are meaningless — hide them */
+body.touch-mode {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.touch-mode .keycap { display: none; }
+body.touch-mode .keycap-hint { display: none; }
+
+/* generic hide utility for plain elements (e.g. the pause-screen FIELD GUIDE
+   button, hidden in Arena mode). Overlays/panels have their own .hidden rules. */
+button.hidden { display: none; }
+
+/* Arena stat-point allocation (top-center, non-blocking) */
+#arena-stats {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(12, 10, 8, 0.92);
+  border: 1px solid #c9a227;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+#arena-stats.hidden { display: none; }
+
+#stat-prompt-txt {
+  color: #ffd166;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.stat-row { display: flex; gap: 6px; }
+
+.stat-btn {
+  min-width: 68px;
+  min-height: 40px;
+  padding: 8px 10px;
+  background: #2f6f4f;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.stat-btn:hover { background: #3c8f66; }
+.stat-btn:disabled { background: #3a3a3a; color: #777; cursor: default; }
+
+/* the game is landscape-only on phones */
+#rotate-hint { display: none; }
+
+@media (orientation: portrait) {
+  body.touch-mode #rotate-hint {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 20px;
+    background: #15130f;
+    color: #ffd166;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    line-height: 1.8;
+  }
+  /* the game clock is frozen while portrait auto-pauses; the phone glyph
+     nudges the player to turn back to landscape */
+  body.touch-mode #rotate-hint::before {
+    content: "\21BB";
+    display: block;
+    font-size: 40px;
+    margin-bottom: 6px;
+  }
+  body.touch-mode #rotate-hint small {
+    display: block;
+    color: #a89f92;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 1px;
+    margin-top: 4px;
+  }
+}
+
+#game-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+canvas {
+  background: #3b362e;
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
+  touch-action: none; /* no browser pan/zoom gestures over the game */
+}
+
+/* ---- platform-specific content swaps ---- */
+/* .kbd-only shows on desktop, .touch-only shows on touch; hidden otherwise */
+.touch-only { display: none; }
+body.touch-mode .kbd-only { display: none; }
+body.touch-mode .touch-only { display: block; }
+/* inline keyboard hints (e.g. "(R)") vanish on touch */
+body.touch-mode span.kbd-only { display: none; }
+
+/* ---- virtual touch controls (body.touch-mode only) ---- */
+#touch-controls { display: none; }
+body.touch-mode #touch-controls { display: block; }
+/* hide the virtual controls whenever a full-screen menu overlay is open
+   (intermission is a docked panel, not an .overlay, so controls stay live
+   there — you can drive to scrap piles between rounds) */
+body.touch-mode:has(.overlay:not(.hidden)) #touch-controls { display: none; }
+
+#joystick-zone {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  touch-action: none;
+  z-index: 7;
+}
+
+#joystick-stick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  margin: -29px 0 0 -29px;
+  border-radius: 50%;
+  background: rgba(255, 209, 102, 0.3);
+  border: 1px solid #ffd166;
+  pointer-events: none;
+}
+
+.touch-btn {
+  position: absolute;
+  border-radius: 50%;
+  touch-action: none;
+  z-index: 7;
+  background: rgba(12, 10, 8, 0.72);
+  border: 1px solid #5a5148;
+  color: #ffd166;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 1px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.touch-btn:active { border-color: #ffd166; background: rgba(40, 32, 12, 0.85); }
+
+#touch-fire { right: 26px; bottom: 46px; width: 88px; height: 88px; font-size: 14px; }
+#touch-drift { right: 130px; bottom: 22px; width: 68px; height: 68px; font-size: 12px; }
+/* pause lives in the extreme corner — outside the arena on letterboxed
+   phones, and clear of the canvas HUD panel */
+#touch-pause { top: 10px; right: 12px; width: 44px; height: 44px; font-size: 15px; }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(10, 8, 6, 0.84);
+  color: #eee;
+  text-align: center;
+  z-index: 10;
+}
+
+.overlay.hidden { display: none; }
+
+.overlay h1 {
+  font-size: 58px;
+  letter-spacing: 6px;
+  color: #ffd166;
+  text-shadow: 0 4px 0 #7a5b00;
+}
+
+.overlay h2 {
+  font-size: 18px;
+  letter-spacing: 12px;
+  color: #c0b7a8;
+  font-weight: 400;
+}
+
+.overlay p {
+  color: #a89f92;
+  line-height: 1.7;
+}
+
+/* between-rounds shop + next-round prompt */
+#intermission {
+  position: absolute;
+  top: 52%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(740px, 92vw);
+}
+
+#intermission.hidden { display: none; }
+
+#shop {
+  width: 100%;
+  background: rgba(12, 10, 8, 0.93);
+  border: 1px solid #5a5148;
+  border-radius: 10px;
+  padding: 14px 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  /* themed scrollbar (Firefox) */
+  scrollbar-width: thin;
+  scrollbar-color: #6e5f4b rgba(0, 0, 0, 0.35);
+}
+
+/* themed scrollbar (Chrome/Edge): rusty steel thumb in a dark track */
+#shop::-webkit-scrollbar { width: 11px; }
+
+#shop::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  margin: 6px 0;
+}
+
+#shop::-webkit-scrollbar-thumb {
+  background: #6e5f4b;
+  border-radius: 8px;
+  border: 2px solid rgba(12, 10, 8, 0.93); /* inset look against the panel */
+}
+
+#shop::-webkit-scrollbar-thumb:hover { background: #a58a3d; }
+
+#shop-header {
+  display: flex;
+  justify-content: space-between;
+  color: #ffd166;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+
+#shop.hidden { display: none; }
+
+/* round-over box: title with START ROUND and SHOP stacked inside */
+#round-over-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: rgba(12, 10, 8, 0.93);
+  border: 1px solid #5a5148;
+  border-radius: 10px;
+  padding: 18px 34px 20px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+}
+
+#round-over-title {
+  color: #ffd166;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  margin-bottom: 4px;
+  text-shadow: 0 2px 0 #7a5b00;
+}
+
+/* double-ID selector so the blue survives the shared red panel-button rule */
+#round-over-panel #open-shop-btn {
+  background: #3f88c5;
+  font-size: 15px;
+  padding: 10px 26px;
+}
+
+#round-over-panel #open-shop-btn:hover { background: #5aa0d8; }
+
+/* side shop button, visible during intermissions */
+#shop-toggle {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  background: rgba(12, 10, 8, 0.9);
+  border: 1px solid #5a5148;
+  border-radius: 8px;
+  color: #ffd166;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+#shop-toggle:hover { border-color: #c9a227; background: rgba(26, 21, 8, 0.95); }
+
+#shop-toggle.hidden { display: none; }
+
+/* keybind indicator, styled as a keycap */
+.keycap {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid #c0b7a8;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #c0b7a8;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+/* Arena modular loadout / equip panel (left side, below the LVL HUD).
+   Position is set by JS (positionArenaDom) relative to the canvas so it lines
+   up with the canvas HUD at any display scale. */
+#arena-loadout {
+  position: fixed;
+  z-index: 7;
+  width: 226px;
+  padding: 8px 10px;
+  background: rgba(12, 10, 8, 0.9);
+  border: 1px solid #5a5148;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  user-select: none;
+}
+#arena-loadout.hidden { display: none; }
+.lo-title { color: #ffd166; font-weight: 700; letter-spacing: 2px; font-size: 11px; margin-bottom: 6px; }
+.lo-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
+.lo-row .lo-label { color: #8a8175; font-size: 10px; letter-spacing: 1px; }
+.lo-row .lo-part { font-weight: 600; text-align: right; white-space: nowrap; }
+.lo-row .lo-empty { color: #5a5348; text-align: right; }
+/* ⇄ swap primary/secondary — a full-width control under the weapon rows */
+.lo-swaprow {
+  display: block; width: 100%; margin: 5px 0 0; min-height: 28px; padding: 5px;
+  background: rgba(201, 162, 39, 0.15); border: 1px solid #c9a227; border-radius: 6px;
+  color: #ffd166; font-family: inherit; font-size: 11px; font-weight: 700; letter-spacing: 1px; cursor: pointer;
+}
+.lo-swaprow:hover { background: rgba(201, 162, 39, 0.3); }
+body.touch-mode .lo-swaprow { min-height: 30px; font-size: 10px; }
+.lo-sub { color: #c0b7a8; font-size: 10px; letter-spacing: 1px; margin: 8px 0 4px; border-top: 1px solid #3a352d; padding-top: 6px; }
+/* a tappable nearby-part row: tinted green (upgrade) or red (downgrade) */
+.lo-pick {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  width: 100%; min-height: 32px; margin: 3px 0; padding: 5px 8px;
+  border: 1px solid; border-radius: 6px; cursor: pointer;
+  font-family: inherit; font-size: 11px; font-weight: 600; text-align: left;
+}
+.lo-pick .lo-arrow { font-weight: 700; font-size: 13px; }
+.lo-pick.up { background: rgba(95, 211, 95, 0.15); border-color: rgba(95, 211, 95, 0.6); }
+.lo-pick.up .lo-arrow { color: #5fd35f; }
+.lo-pick.down { background: rgba(231, 76, 60, 0.15); border-color: rgba(231, 76, 60, 0.55); }
+.lo-pick.down .lo-arrow { color: #e74c3c; }
+.lo-pick.same { background: rgba(255, 255, 255, 0.06); border-color: #5a5148; }
+.lo-pick.same .lo-arrow { color: #c0b7a8; }
+.lo-pick:hover { filter: brightness(1.25); }
+
+/* compact on phones so it doesn't dominate the screen / crowd the joystick */
+body.touch-mode #arena-loadout {
+  width: 166px; padding: 6px 8px; font-size: 11px;
+  max-height: 58vh; overflow-y: auto;
+}
+body.touch-mode .lo-title { font-size: 10px; margin-bottom: 4px; }
+body.touch-mode .lo-row { padding: 1px 0; }
+body.touch-mode .lo-row .lo-part, body.touch-mode .lo-row .lo-empty { font-size: 10px; }
+body.touch-mode .lo-sub { margin: 5px 0 3px; padding-top: 4px; }
+body.touch-mode .lo-pick { min-height: 30px; padding: 4px 7px; font-size: 10px; margin: 2px 0; }
+
+#loadout-toggle {
+  position: fixed;
+  z-index: 6;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 14px;
+  background: rgba(12, 10, 8, 0.9);
+  border: 1px solid #5a5148;
+  border-radius: 8px;
+  color: #ffd166;
+  font-family: inherit; font-size: 13px; font-weight: 700; letter-spacing: 2px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+#loadout-toggle:hover { border-color: #c9a227; background: rgba(26, 21, 8, 0.95); }
+#loadout-toggle.hidden { display: none; }
+
+/* Arena spectate controls: slim top-center row (the world keeps running) */
+#spectate-ui {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  gap: 8px;
+}
+#spectate-ui.hidden { display: none; }
+#spectate-ui button {
+  min-height: 40px;
+  padding: 8px 14px;
+  background: rgba(12, 10, 8, 0.9);
+  border: 1px solid #c9a227;
+  border-radius: 8px;
+  color: #ffd166;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#spectate-ui button:hover { background: rgba(26, 21, 8, 0.95); }
+body.touch-mode #spectate-ui { top: 8px; }
+
+/* category tab bar along the top of the shop */
+#shop-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.shop-tab {
+  flex: 1;
+  position: relative;
+  padding: 7px 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #8f877b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.shop-tab:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e8e2d6;
+}
+
+/* selected tab: bright gold, lifted, glowing, with a pointer notch into the
+   card area below — unmistakable which section you're in */
+.shop-tab.active {
+  background: #ffd166;
+  border-color: #ffd166;
+  color: #1a1508;
+  padding: 9px 4px;
+  transform: translateY(-2px);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.45);
+}
+
+.shop-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid #ffd166;
+}
+
+/* gold dot: this category holds something you can afford right now */
+.shop-tab.notify:not(.active)::after {
+  content: " \25CF";
+  color: #ffd166;
+  font-size: 9px;
+  vertical-align: 2px;
+}
+
+.shop-section-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+/* narrow screens (phones): two columns keep the cards readable */
+@media (max-width: 820px) {
+  .shop-section-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.shop-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.shop-card h4 {
+  color: #e8e2d6;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.shop-card .pips {
+  color: #ffd166;
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+
+.shop-card .desc {
+  color: #a89f92;
+  font-size: 11px;
+  line-height: 1.35;
+  flex: 1;
+}
+
+.shop-card button {
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 1px;
+  background: #3a3a3a;
+  color: #777;
+  border: none;
+  border-radius: 5px;
+  cursor: default;
+}
+
+/* --- purchasability states (set by Shop.refresh) --- */
+
+/* buyable right now: green edge + green buy button */
+.shop-card.can-buy { border-color: rgba(46, 204, 113, 0.55); }
+
+.shop-card.can-buy button {
+  background: #27ae60;
+  color: #fff;
+  cursor: pointer;
+}
+
+.shop-card.can-buy button:hover { background: #2ecc71; }
+
+/* can't afford yet: fully grayed out, red shortfall callout on the button */
+.shop-card.cant-buy {
+  opacity: 0.45;
+  filter: grayscale(0.9);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.shop-card.cant-buy button {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+/* fully owned (nothing left to buy): grayed out too, but keeps a muted gold
+   edge + MAXED tag so it reads as "complete", not "locked" */
+.shop-card.maxed {
+  opacity: 0.55;
+  filter: grayscale(0.5);
+  border-color: rgba(201, 162, 39, 0.55);
+}
+
+.shop-card.maxed button {
+  background: rgba(201, 162, 39, 0.15);
+  color: #ffd166;
+}
+
+/* repair kit heal options: 25% / 50% / 100% side by side */
+.kit-row {
+  display: flex;
+  gap: 4px;
+}
+
+.kit-row button {
+  flex: 1;
+  padding: 5px 4px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+/* amber option: costs more than you have — buying gives a partial heal */
+.shop-card.can-buy .kit-row button.partial {
+  background: #8a6d1f;
+}
+
+.shop-card.can-buy .kit-row button.partial:hover {
+  background: #a5852a;
+}
+
+.overlay button,
+#round-over-panel button {
+  margin-top: 18px;
+  font-size: 20px;
+  letter-spacing: 2px;
+  padding: 14px 36px;
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.overlay button:hover,
+#round-over-panel button:hover { background: #e74c3c; }
+
+#round-over-panel button {
+  margin-top: 0;
+  font-size: 16px;
+  padding: 12px 28px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+#final-stats { font-size: 20px; line-height: 2; color: #ddd; }
+#final-stats b { color: #ffd166; }
+
+/* start-screen mode picker */
+#mode-select {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+#mode-select button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 340px;
+  margin-top: 0;
+}
+
+#start-arena-btn { background: #2f6f4f; }
+#start-arena-btn:hover { background: #3c8f66; }
+
+.mode-sub {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* arena starting-weapon picker */
+#weapon-grid {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 6px 0 4px;
+}
+
+.weapon-card {
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 14px 16px;
+  background: rgba(12, 10, 8, 0.9);
+  border: 1px solid #5a5148;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.weapon-card:hover {
+  border-color: #ffd166;
+  background: rgba(26, 21, 8, 0.92);
+  transform: translateY(-3px);
+}
+
+.weapon-portrait {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}
+
+.weapon-name {
+  color: #ffd166;
+  font-weight: 700;
+  letter-spacing: 3px;
+  font-size: 17px;
+}
+
+.weapon-desc {
+  color: #a89f92;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+#final-stats .seed-line {
+  font-size: 12px;
+  color: #6e675c;
+  letter-spacing: 1px;
+  font-family: Consolas, monospace;
+}
+
+/* options screen */
+.options-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 14px 20px;
+}
+
+.options-row label {
+  color: #c0b7a8;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+#volume-slider {
+  width: 220px;
+  accent-color: #ffd166;
+  cursor: pointer;
+}
+
+#volume-value {
+  color: #ffd166;
+  font-weight: 700;
+  font-size: 14px;
+  width: 44px;
+  text-align: right;
+}
+
+/* field guide: card grid with live-rendered car portraits */
+#guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  width: min(680px, 92vw);
+  max-height: 56vh;
+  overflow-y: auto;
+  padding: 4px;
+  /* themed scrollbar to match the shop */
+  scrollbar-width: thin;
+  scrollbar-color: #6e5f4b rgba(0, 0, 0, 0.35);
+}
+
+#guide-grid::-webkit-scrollbar { width: 11px; }
+#guide-grid::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.35); border-radius: 8px; }
+#guide-grid::-webkit-scrollbar-thumb {
+  background: #6e5f4b;
+  border-radius: 8px;
+  border: 2px solid rgba(12, 10, 8, 0.93);
+}
+#guide-grid::-webkit-scrollbar-thumb:hover { background: #a58a3d; }
+
+.guide-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.guide-portrait {
+  flex: none;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+
+.guide-name {
+  color: #ffd166;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 1px;
+  margin-bottom: 3px;
+}
+
+.guide-tip {
+  color: #a89f92;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ---- landscape phones: the viewport is SHORT (~390px) — compact every
+   menu so nothing overflows. Mobile is always landscape (portrait shows the
+   rotate overlay), so max-height is the signal, not max-width.
+   MUST stay at the END of this file so it wins the cascade. ---- */
+@media (max-height: 500px) {
+  .overlay { gap: 6px; }
+  .overlay h1 { font-size: 30px; letter-spacing: 3px; }
+  .overlay h2 { font-size: 13px; letter-spacing: 6px; }
+  .overlay p { font-size: 12px; line-height: 1.45; }
+  .overlay button,
+  #round-over-panel button {
+    font-size: 14px;
+    padding: 9px 22px;
+    margin-top: 6px;
+  }
+  /* round-over menu docks to the TOP as a slim row so the arena (and its
+     scrap piles) stays visible and drivable during the intermission */
+  #intermission { top: 10px; transform: translateX(-50%); }
+  #round-over-panel { flex-direction: row; align-items: center; padding: 8px 16px; gap: 12px; }
+  #round-over-title { font-size: 13px; letter-spacing: 2px; margin-bottom: 0; }
+  #round-over-panel button { margin-top: 0; font-size: 12px; padding: 8px 14px; }
+  #shop { max-height: 52vh; padding: 10px 12px; }
+  #shop-header { font-size: 13px; margin-bottom: 6px; }
+  .shop-tab { padding: 5px 3px; font-size: 10px; letter-spacing: 1px; }
+  .shop-tab.active { padding: 6px 3px; }
+  .shop-card { padding: 6px 8px; gap: 3px; }
+  .shop-card h4 { font-size: 12px; }
+  .shop-card .desc { font-size: 10px; }
+  #guide-grid { max-height: 46vh; }
+  .guide-card { padding: 6px 10px; gap: 10px; }
+  /* arena stat buttons: compact for a short landscape phone */
+  #arena-stats { padding: 6px 8px; gap: 4px; top: 8px; }
+  #stat-prompt-txt { font-size: 10px; letter-spacing: 1px; }
+  .stat-btn { min-width: 58px; min-height: 38px; font-size: 10px; padding: 6px 6px; }
+  /* weapon picker: shrink cards so 3 fit a short landscape phone */
+  #weapon-grid { gap: 8px; }
+  .weapon-card { width: 150px; padding: 8px 8px 10px; gap: 4px; }
+  .weapon-card .weapon-portrait { width: 84px; height: 60px; }
+  .weapon-name { font-size: 13px; letter-spacing: 2px; }
+  .weapon-desc { font-size: 10px; line-height: 1.3; }
+  .options-row { padding: 10px 16px; }
+  #final-stats { font-size: 14px; line-height: 1.7; }
+  #joystick-zone { width: 124px; height: 124px; }
+  #touch-fire { width: 76px; height: 76px; bottom: 38px; }
+  #touch-drift { width: 58px; height: 58px; right: 112px; }
+  /* side SHOP button: up and compact, clear of the FIRE/DRIFT cluster */
+  #shop-toggle { top: 20%; transform: none; padding: 8px 10px; font-size: 11px; }
+}

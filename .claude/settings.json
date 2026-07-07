@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(node *)",
+      "Bash(curl *)",
+      "Bash(sleep *)",
+      "PowerShell(node *)",
+      "PowerShell(foreach *)",
+      "PowerShell(curl.exe *)",
+      "PowerShell($sp = *)",
+      "PowerShell($out = *)",
+      "PowerShell($edge = *)",
+      "PowerShell(cd \"c:\\Users\\cmidd\\Scrapyard_Derby\"*)",
+      "PowerShell(*Scrapyard_Derby*)"
+    ]
+  }
+}
