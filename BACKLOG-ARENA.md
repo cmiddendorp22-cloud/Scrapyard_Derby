@@ -519,6 +519,60 @@ identical states never mirror into loops). See changelog 2026-07-07.
 
 ---
 
+## User queue — 2026-07-07 batch (decided via Q&A; see changelog for builds)
+
+1. FIX XP FROM KILLS — SKIPPED (user call: leave as-is for now).
+2. ✅ BOSS UI — plate-torn banners fire only when the player is within 1000px
+   (or did the tearing); a slim JUNK TITAN healthbar pins top-center whenever
+   it's alive (drops below the spectate buttons while spectating).
+3. ✅ BOTS SHOOT SCRAP — farming cannon bots fire at their pile from 60-420px
+   when roughly aligned (quiet, no audio spam); ANY bot bullet that hits a
+   pile harvests it into THAT BOT's XP (Titan shells don't harvest).
+4. ✅ LOW-HP FLEE — under 50% HP a bot rolls to RETREAT on a 2-3.5s cadence
+   (per-frame rolling would compound to instant flight — user spec); odds =
+   ((0.5-hpFrac)/0.5)^1.5 × 1.4 × persona.cowardice (0.7-1.3) — near-certain
+   when critical. Retreats reuse the escape run but survive being hit
+   (`fleeing` flag; bored walk-aways still cancel on hits).
+5. BOT-ONLY GAMEMODE — SKIPPED for now.
+6. ✅ SHOOTABLE MINES — 3 bullet hits detonate a mine (`detonateMine`): AoE
+   falloff damage + knockback to cars (and the Titan) near it, credited to
+   the SHOOTER — popping your own minefield remotely is legal play.
+7. ✅ BOTS AGGRESSIVE WITH LEVEL — pickTarget shifts temperament with level
+   (playerBias −0.01/level, floor 0.4) AND detect ranges grow (+2%/level,
+   cap +50%) — veterans seek fights rookies drive past.
+8. ✅ REMOVE DURABILITY STAT — stat deleted everywhere (buttons/keys/HUD/bot
+   spreads → health/speed/reload [+regen player-only]); ARMOR's per-tier
+   damage reduction doubled 0.05 → 0.10 to compensate.
+9. ✅ SAME-TYPE WEAPON → MATCHING SLOT — `targetSlot` matches a weapon drop's
+   TYPE against BOTH weapon slots first (so a better cannon upgrades your
+   cannon even in the PRIMARY); arrows + equip + ⇄ all inherit it.
+10. PARTS BREAK OVER TIME — kept as a backlog idea (overlaps the planned
+    dismemberment; decide when that's designed).
+11. ✅ GAUNTLET → "ENDLESS GAUNTLET" + COMING SOON — renamed, button disabled
+    + grayed on the start screen; all Gauntlet code/tests intact underneath.
+12. MENU SCREEN WITH GRAPHICS — SKIPPED for now.
+13. WEAK AUTOMATIC GUN — SKIPPED for now.
+14. RAM BOOST BREAKS PILES — SKIPPED for now.
+
+## User queue — 2026-07-07 batch 2 additions
+
+- SECONDARY-SLOT WEAPON BEHAVIOR (user; generalized from "ram can't charge in
+  secondary"): EVERY weapon should behave differently in the SECONDARY slot vs
+  primary — design a per-weapon secondary mode. Seeds: RAM secondary = no
+  charging (inert or a passive plow/collision bonus until ⇄ promoted); CANNON
+  secondary = ? (slower fire? auto-turret?); MINELAYER secondary = ? (fewer/
+  weaker mines?). Decide each when building — the ⇄ swap makes slot choice a
+  real decision.
+- IN-GAME WIKI SCREEN (user pick): a Field-Guide-style menu screen (rendered
+  in-code, no assets) documenting weapons, part slots + the 5 tiers, stats,
+  the Junk Titan, XP/kill/death rules, controls. Entry point: pause menu
+  and/or start screen.
+- AUTOMATIC REVIVE (user): auto-revive after death — e.g. the death menu
+  auto-respawns after a countdown (spectate/menu still selectable), or a
+  revive mechanic/item. Scope TBD with user when built.
+
+---
+
 ## Known balance risks (revisit LATER, not at first build)
 
 - **Dual-cannon meta collapse:** the classic .io failure where everyone runs

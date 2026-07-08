@@ -138,8 +138,8 @@
   document.getElementById("main-menu-btn").addEventListener("click", quitToMenu);
 
   // Arena stat allocation: tappable buttons + desktop number keys 1-5.
-  const STAT_LABELS = { health: "HEALTH", speed: "SPEED", reload: "RELOAD", durability: "DURABILITY", regen: "REGEN" };
-  const STAT_KEYS = { Digit1: "health", Digit2: "speed", Digit3: "reload", Digit4: "durability", Digit5: "regen" };
+  const STAT_LABELS = { health: "HEALTH", speed: "SPEED", reload: "RELOAD", regen: "REGEN" };
+  const STAT_KEYS = { Digit1: "health", Digit2: "speed", Digit3: "reload", Digit4: "regen" };
   for (const s in STAT_LABELS) {
     document.getElementById("stat-" + s).addEventListener("click", () => {
       if (active === arena) { arena.spendStat(s); updateArenaStatsUI(); }
@@ -186,7 +186,19 @@
   function updateLoadoutPanel() {
     const panel = document.getElementById("arena-loadout");
     const toggle = document.getElementById("loadout-toggle");
-    if (active !== arena || !arena.started || arena.dead) { panel.classList.add("hidden"); toggle.classList.add("hidden"); return; }
+    if (active !== arena || !arena.started) { panel.classList.add("hidden"); toggle.classList.add("hidden"); return; }
+    if (arena.dead) {
+      // SPECTATE: the panel shows the WATCHED bot's parts, read-only
+      toggle.classList.add("hidden");
+      const t = arena.spectate ? arena.spectateTarget() : null;
+      if (!t || !t.loadout) { panel.classList.add("hidden"); lastLoadoutSig = ""; return; }
+      const sig = "spec:" + t.name + t.level + ["tires", "engine", "weapon", "armor"]
+        .map((k) => { const p = t.loadout[k]; return p ? p.type + p.tier : "-"; }).join("|");
+      if (sig !== lastLoadoutSig) { lastLoadoutSig = sig; buildSpectatePanel(t); }
+      panel.classList.remove("hidden");
+      positionArenaDom();
+      return;
+    }
     toggle.classList.remove("hidden");
     positionArenaDom();
     const near = arena.collectibleDrops();
@@ -199,7 +211,25 @@
     panel.classList.remove("hidden");
     positionArenaDom();
   }
+  // read-only panel for SPECTATE: the watched bot's four part slots
+  function buildSpectatePanel(bot) {
+    document.querySelector("#arena-loadout .lo-title").textContent = bot.name + " — PARTS";
+    const slotsEl = document.getElementById("lo-slots");
+    slotsEl.innerHTML = "";
+    for (const [label, key] of [["TIRES", "tires"], ["ENGINE", "engine"], ["WEAPON", "weapon"], ["ARMOR", "armor"]]) {
+      const part = bot.loadout[key];
+      const row = document.createElement("div"); row.className = "lo-row";
+      const l = document.createElement("span"); l.className = "lo-label"; l.textContent = label;
+      const v = document.createElement("span");
+      if (part) { v.className = "lo-part"; v.textContent = partName(part); v.style.color = tierColor(part); }
+      else { v.className = "lo-empty"; v.textContent = "— empty —"; }
+      row.appendChild(l); row.appendChild(v); slotsEl.appendChild(row);
+    }
+    document.getElementById("lo-nearby").innerHTML = ""; // read-only: no pickups, no swap
+  }
+
   function buildLoadoutPanel(near) {
+    document.querySelector("#arena-loadout .lo-title").textContent = "LOADOUT"; // undo any spectate title
     const slotsEl = document.getElementById("lo-slots");
     slotsEl.innerHTML = "";
     for (const [label, key] of SLOT_ROWS) {

@@ -142,6 +142,7 @@ class ArenaRenderer {
     this.drawMinimap();
     this.drawLeaderboard();
     this.drawKillfeed();
+    this.drawBossBar();
     this.drawHud();
     this.drawBanners();
     if (g.dead) this.drawDeathOverlay();
@@ -474,6 +475,31 @@ class ArenaRenderer {
     ctx.restore();
   }
 
+  // slim JUNK TITAN healthbar pinned to the top-center whenever it's alive
+  // (the transient DOM panels overlay it briefly — they own the top layer)
+  drawBossBar() {
+    const g = this.arena, boss = g.boss, ctx = this.ctx;
+    if (!boss || boss.dead) return;
+    // fight UI, not world-status UI: only while the VIEW is approaching the
+    // Titan (~1200px, camera-based so it also works while spectating)
+    if (dist(g.cam.x, g.cam.y, boss.x, boss.y) > 1200) return;
+    // drops below the spectate button row when it's up
+    const w = 320, h = 9, x = (WORLD.w - w) / 2, y = g.spectate ? 64 : 16;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffd166";
+    ctx.font = "bold 11px 'Segoe UI', sans-serif";
+    ctx.fillText("JUNK TITAN", WORLD.w / 2, y - 4);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    pathRoundRect(ctx, x - 2, y - 2, w + 4, h + 4, 4);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = "#e67e22";
+    ctx.fillRect(x, y, w * boss.hpFrac(), h);
+    ctx.restore();
+  }
+
   // live standings under the minimap: rank · name · level. The #1 (bounty
   // target) row is gold-highlighted and matches the gold minimap sector.
   drawLeaderboard() {
@@ -515,9 +541,8 @@ class ArenaRenderer {
   drawKillfeed() {
     const g = this.arena, fk = g.killfeed, ctx = this.ctx;
     if (!fk || !fk.length) return;
-    // on touch, the SPEND POINTS panel (shown exactly when statPoints>0) shares
-    // the top band — hide the feed while it's up so they don't crowd
-    if (g.touchMode && g.statPoints > 0) return;
+    // (the SPEND POINTS panel now docks to the BOTTOM, so the feed no longer
+    // needs to hide while points are pending)
     const compact = g.touchMode;                        // smaller + fewer lines on phones
     const S = 150, PAD = 14;
     const rightX = (WORLD.w - S - PAD) - 12;            // gap to the minimap's left edge
@@ -569,7 +594,7 @@ class ArenaRenderer {
     ctx.font = "10px Consolas, monospace";
     ctx.fillStyle = "#c0b7a8";
     const s = g.stats;
-    ctx.fillText("HP " + s.health + "  SPD " + s.speed + "  RLD " + s.reload + "  DUR " + s.durability + "  RGN " + s.regen, 28, 84);
+    ctx.fillText("HP " + s.health + "   SPD " + s.speed + "   RLD " + s.reload + "   RGN " + s.regen, 28, 84);
     if (g.statPoints > 0) {
       ctx.fillStyle = "#ffd166";
       ctx.fillText("+" + g.statPoints + " point" + (g.statPoints > 1 ? "s" : "") + " to spend", 28, 100);

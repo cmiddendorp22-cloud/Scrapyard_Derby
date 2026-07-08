@@ -483,6 +483,78 @@ cascade bug that text-only testing never would.
   base kill) + full regression + desktop & mobile screenshots green. NOT yet:
   bots hunting the bounty (they don't read the board); global cross-session
   board (waits on accounts).
+- **2026-07-07** — Arena slot/spectate/boss-UI mini-batch (user Q&A; skips →
+  backlog). (1) WEAPON-2 OPEN FROM L1: the L10 unlock was cosmetic anyway
+  (never enforced) — gate + banner removed, `SLOT_UNLOCKS` = armor@5 only,
+  `slots.weapon2` deleted. (2) ONE WEAPON TYPE PER CAR: hard guard in
+  `equipPart` (before the claim, so a refused equip doesn't consume the drop)
+  — a weapon drop whose type matches the OTHER weapon slot is rejected;
+  structurally unreachable today via type-matching targetSlot, guarded for
+  future weapons/paths + invariant test (simulated buggy routing). (3)
+  SPECTATE PARTS VIEW: while spectating, the `#arena-loadout` panel shows the
+  WATCHED bot's four slots read-only ("NAME — PARTS", tier-colored, no
+  pickups/swap; rebuilds on NEXT/handoff via a spectate signature;
+  `buildLoadoutPanel` resets the title). (4) BOSS TITLE/BAR gated to ~1200px:
+  `drawBossBar` returns unless the CAMERA (works alive + spectating) is
+  within 1200px of the Titan. BACKLOGGED (user): per-weapon SECONDARY-slot
+  behaviors (generalized from "ram can't charge in secondary"), in-game WIKI
+  screen, AUTOMATIC REVIVE. Gated by arena-level-test.js (weapon2-no-gate
+  asserts, dupe-guard refusal + drop-not-consumed) + full regression, 4/4
+  stability + spectate-parts screenshot.
+- **2026-07-07** — Arena FLEE is now OPPONENT-AWARE (user picks: veto +
+  scaling + attacker-only bloodlust). The low-HP flee roll now reads the
+  target's health (`foeFrac`: player = game.hp, Titan = hpFrac(), bot =
+  hp/maxHp): (1) FINISH-HIM VETO — never flee from a foe in worse shape than
+  me or under 15% HP (won fights get finished); (2) RELATIVE SCALING — flee
+  odds ×= clamp(foeFrac/myFrac, 0.15, 1.5): healthy foes are fled as before,
+  mutual wrecks slug it out; (3) BLOODLUST — if the enemy I'VE been hitting
+  (its lastHitBy === me; playerLastHitBy for the player) drops under 20%, I
+  commit 100%: fleeing disabled, `fightT` forced past escalateT (tight
+  orbit), dive interval HALVED — but merely SEEING a stranger's dying victim
+  changes nothing (user rule: attacker-only). Gated by arena-level-test.js
+  (no flee from a dying/worse-off foe, healthy-foe critical flee unchanged,
+  bloodlust escalation for MY prey + nothing for a stranger's) + a mine-test
+  isolation fix (scrap/bots could eat its bullets) — 6/6 stability runs +
+  full regression green.
+- **2026-07-07** — Arena SPEND POINTS panel moved to the BOTTOM (user: it and
+  the new top-center JUNK TITAN healthbar blocked each other). `#arena-stats`
+  now docks flush to the bottom-center (bottom: 0, top-only radius, no bottom
+  border; same in the short-phone media block) — clears the boss bar/banners
+  entirely, and on touch it sits centered between the joystick and DRIFT/FIRE
+  (screenshot-verified both viewports). The killfeed's touch-mode auto-hide
+  gate (`touchMode && statPoints>0`) was removed — it existed only because the
+  panel shared the top band; the feed now stays visible while points pend.
+- **2026-07-07** — BATCH of 8 user-picked changes (14 queued via Q&A; 6
+  skipped — see BACKLOG-ARENA "User queue"). (1) DURABILITY STAT REMOVED:
+  player stats are now health/speed/reload/regen (bots: health/speed/reload);
+  ARMOR's per-tier damage reduction doubled 0.05→0.10 (`partDmgReduce = 0.10 *
+  tier+1` both classes); stat button/keys/HUD updated (keys 1-4). (2)
+  SAME-TYPE WEAPON → MATCHING SLOT: `targetSlot` checks a weapon drop's type
+  against weapon1 THEN weapon2 before the empty/secondary fallback — a
+  higher-tier cannon now green-arrows + swaps into your cannon slot EVEN IF
+  PRIMARY. (3) SHOOTABLE MINES: 3 bullet hits pop a mine (`m.hp ??= 3`;
+  `detonateMine(m, source)` — AoE falloff dmg + knockback to cars/Titan,
+  credited to the shooter; own-mine remote detonation allowed). (4) BOTS
+  SHOOT-TO-FARM: farming cannon bots fire at their pile (60-420px, aligned,
+  no audio); ANY gainXp-capable shooter's bullet harvests scrap into ITS XP.
+  (5) LOW-HP FLEE: engaged bots roll to retreat on a 2-3.5s cadence (NOT
+  per-frame — compounding; user spec), odds ((0.5-hp%)/0.5)^1.5×1.4×
+  persona.cowardice under 50% HP; retreats reuse the escape run but survive
+  hits (`fleeing` flag) unlike bored walk-aways. (6) LEVEL AGGRESSION:
+  pickTarget's playerBias shifts −0.01/level (floor 0.4) + detect ranges grow
+  +2%/level (cap +50%). (7) BOSS UI: plate-torn banners gated to within
+  1000px (or you did it); `drawBossBar` pins a slim JUNK TITAN HP bar
+  top-center whenever it's alive (y=64 while spectating to clear the button
+  row). (8) ENDLESS GAUNTLET: mode renamed, start-screen button disabled +
+  grayed ("COMING SOON", `.mode-disabled` CSS); page title → "Scrapyard
+  Derby"; all Gauntlet code/tests intact. NOTE: a PowerShell text-replace
+  mojibake'd arena.js mid-batch — repaired byte-exact via cp1252 round-trip;
+  lesson: use the Edit tool for source edits. Gated by arena-level-test.js
+  (new batch section: slot-match incl. primary replace, 3-hit mine pop +
+  credit, bot farm-shot + harvest XP, critical-flee + hit-doesn't-cancel +
+  full-HP-never, L21 detect range, banner gating) + durability asserts
+  rewritten to armor + full regression, 5/5 stability runs + screenshots
+  (start screen, boss bar, 4-stat panel).
 - **2026-07-07** — Arena RAM handbrake NOSE-CUT (user: rams should handbrake
   to whip their front onto enemies "more often but not necessarily all the
   time"). In the ram combat branch: when badly off the intercept aim

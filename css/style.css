@@ -23,10 +23,11 @@ body.touch-mode .keycap-hint { display: none; }
    button, hidden in Arena mode). Overlays/panels have their own .hidden rules. */
 button.hidden { display: none; }
 
-/* Arena stat-point allocation (top-center, non-blocking) */
+/* Arena stat-point allocation: docked flush to the BOTTOM-center so it never
+   fights the top-of-screen boss bar / banners (non-blocking — world runs) */
 #arena-stats {
   position: absolute;
-  top: 12px;
+  bottom: 0;
   left: 50%;
   transform: translateX(-50%);
   z-index: 8;
@@ -37,7 +38,8 @@ button.hidden { display: none; }
   padding: 8px 12px;
   background: rgba(12, 10, 8, 0.92);
   border: 1px solid #c9a227;
-  border-radius: 10px;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
 }
 
@@ -679,6 +681,14 @@ body.touch-mode #spectate-ui { top: 8px; }
 #start-arena-btn { background: #2f6f4f; }
 #start-arena-btn:hover { background: #3c8f66; }
 
+/* a gated mode: visible but unplayable (Endless Gauntlet — coming soon) */
+#mode-select button.mode-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+}
+#mode-select button.mode-disabled:hover { background: inherit; }
+
 .mode-sub {
   font-size: 12px;
   font-weight: 400;
@@ -860,7 +870,7 @@ body.touch-mode #spectate-ui { top: 8px; }
   #guide-grid { max-height: 46vh; }
   .guide-card { padding: 6px 10px; gap: 10px; }
   /* arena stat buttons: compact for a short landscape phone */
-  #arena-stats { padding: 6px 8px; gap: 4px; top: 8px; }
+  #arena-stats { padding: 6px 8px; gap: 4px; bottom: 0; }
   #stat-prompt-txt { font-size: 10px; letter-spacing: 1px; }
   .stat-btn { min-width: 58px; min-height: 38px; font-size: 10px; padding: 6px 6px; }
   /* weapon picker: shrink cards so 3 fit a short landscape phone */

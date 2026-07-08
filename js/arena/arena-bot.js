@@ -105,7 +105,7 @@ class ArenaBot extends Car {
     this.level = level;
     this.xp = 0;
     this.statPoints = 0;                 // spent instantly (randomly) on level-up
-    this.stats = { health: 0, speed: 0, reload: 0, durability: 0 };
+    this.stats = { health: 0, speed: 0, reload: 0 }; // (durability removed — armor part covers it)
     this.name = pick(BOT_NAMES);
     this.fireTimer = rand(0.4, 1.4);
     this.ramCharge = 0; this.ramBoostT = 0; this.ramLaunchStr = 1;
@@ -135,6 +135,7 @@ class ArenaBot extends Car {
       flipCdT: rand(0.8, 1.4),                     // wall U-turn cooldown (desyncs wall escapes)
       unstickDelay: rand(0.5, 1.1),                // how long pinned-on-wall before reversing out
       giveUpT: rand(16, 24),                       // seconds confined to a small area before giving up
+      cowardice: rand(0.7, 1.3),                   // scales the low-HP flee odds (brave vs skittish)
       // temperament toward the PLAYER, rolled once per spawn (user spec):
       // 35% ± 20% priority → distance multiplier 0.45 (55%: player-hunter)
       // to 0.85 (15%: mostly ignores you unless provoked)
@@ -153,6 +154,8 @@ class ArenaBot extends Car {
     this.lastFocus = null;               // what I'm currently pursuing (car/drop/pile)
     this.boredOf = null; this.boredT = 0; // blacklisted focus ("bored of you")
     this.escapeX = 0; this.escapeY = 0; this.escapeT = 0; // committed walk-away
+    this.fleeing = false;                // escape is a low-HP RETREAT (hits don't cancel it)
+    this.fleeCheckT = rand(1.5, 3);      // seconds until the next flee decision
     this.offNoseT = 0;                   // time unable to point at the ram target
     this.orbitDir = pick([1, -1]);       // circle-strafe direction (seeded roll)
     this.flipCd = 0;                     // U-turn cooldown (wall-aware orbit flip)
@@ -196,7 +199,7 @@ class ArenaBot extends Car {
     const newMax = 80 + this.level * 20 + this.stats.health * 25 + 20 * at;
     const inc = newMax - (this.maxHp || newMax);
     this.maxHp = newMax;
-    this.partDmgReduce = this.stats.durability * 0.1 + 0.05 * at;
+    this.partDmgReduce = 0.10 * at; // ARMOR part alone (durability stat removed)
     if (healOnGain) this.hp = Math.min(this.maxHp, this.hp + Math.max(0, inc));
   }
 
@@ -220,12 +223,17 @@ class ArenaBot extends Car {
   // current target is sticky so bots don't flip-flop mid-duel.
   pickTarget(game) {
     let best = null, bs = 1e9;
+    // veterans get BOLDER (user rule): temperament shifts toward hunter with
+    // level, and detection ranges grow (up to +50% at high level) — a L20 bot
+    // seeks out fights a L2 bot would drive past.
+    const bias = Math.max(0.4, this.persona.playerBias - (this.level - 1) * 0.01);
+    const rangeMul = 1 + Math.min(0.5, (this.level - 1) * 0.02);
     const consider = (c, range) => {
       if (c === this.boredOf) return; // gave up on them recently
       const d = dist(this.x, this.y, c.x, c.y);
-      if (d > (c === this.grudge ? RETALIATE_RANGE : range)) return;
+      if (d > (c === this.grudge ? RETALIATE_RANGE : range * rangeMul)) return;
       let eff = d;
-      if (c === game.player) eff *= this.persona.playerBias; // per-bot temperament (0.45 hunter … 0.85 passive)
+      if (c === game.player) eff *= bias; // per-bot temperament (hunter … passive), bolder with level
       if (c === this.grudge) eff *= GRUDGE_MUL;
       if (c === this.combatTarget) eff *= this.persona.sticky; // per-bot loyalty
       if (eff < bs) { bs = eff; best = c; }
@@ -321,6 +329,7 @@ class ArenaBot extends Car {
         this.escapeX = clamp(this.x + Math.cos(ea) * er, em, ARENA.w - em);
         this.escapeY = clamp(this.y + Math.sin(ea) * er, em, ARENA.h - em);
         this.escapeT = rand(4, 6);
+        this.fleeing = false; // a bored walk-away, not a retreat — hits cancel it
       }
     }
     // pick a combat target: any car in range (player slightly prioritized,
@@ -342,6 +351,46 @@ class ArenaBot extends Car {
     else { this.fightT = 0; this.fightTarget = target; }
     if (engaged && this.weapon !== "ram") this.noDmgT += dt; else this.noDmgT = 0;
 
+    // opponent-aware courage: how healthy is my target compared to me, and
+    // am I the one who's been hurting them?
+    const foeFrac = !engaged ? 1
+      : target === game.player ? game.hp / game.maxHp
+      : target.hpFrac ? target.hpFrac()  // the Titan
+      : target.hp / target.maxHp;
+    const foeLastHitter = !engaged ? null
+      : target === game.player ? game.playerLastHitBy : target.lastHitBy;
+    // BLOODLUST (user rule): if the enemy I'VE been hitting drops under 20%,
+    // I commit 100% to the kill — tight orbit, eager dives, no fleeing.
+    // Merely SEEING a stranger that low changes nothing.
+    const bloodlust = engaged && foeFrac < 0.2 && foeLastHitter === this;
+    if (bloodlust) this.fightT = Math.max(this.fightT, this.persona.escalateT + 4);
+
+    // LOW-HP FLEE: a wounded bot increasingly decides to run — odds rise
+    // sharply as health drops (near-certain when critical), scaled by its
+    // cowardice roll AND by how much healthier the enemy is. Decided every
+    // few SECONDS, not per frame (compounding rolls would flee instantly).
+    if (engaged && this.escapeT <= 0 && !bloodlust) {
+      this.fleeCheckT -= dt;
+      if (this.fleeCheckT <= 0) {
+        this.fleeCheckT = rand(2, 3.5);
+        const hpFrac = this.hp / this.maxHp;
+        // FINISH-HIM veto: never run from someone worse off than me, or from
+        // an enemy that's nearly dead — those are won fights
+        if (hpFrac < 0.5 && foeFrac > hpFrac && foeFrac > 0.15) {
+          let odds = Math.pow((0.5 - hpFrac) / 0.5, 1.5) * 1.4 * this.persona.cowardice;
+          odds *= clamp(foeFrac / Math.max(0.05, hpFrac), 0.15, 1.5); // healthier foe → likelier flight
+          if (rand(0, 1) < odds) {
+            const away = Math.atan2(this.y - target.y, this.x - target.x) + rand(-0.5, 0.5);
+            const em = ARENA.wall + 140, er = rand(600, 900);
+            this.escapeX = clamp(this.x + Math.cos(away) * er, em, ARENA.w - em);
+            this.escapeY = clamp(this.y + Math.sin(away) * er, em, ARENA.h - em);
+            this.escapeT = rand(3, 5);
+            this.fleeing = true; // a RETREAT — getting hit doesn't cancel it
+          }
+        }
+      }
+    }
+
     let throttle = 0, steer = 0, wantFire = false, hb = false;
     // personal steering wobble (sim-clock driven → deterministic); applied in
     // combat + on long drives so identical bots take visibly different lines
@@ -357,6 +406,7 @@ class ArenaBot extends Car {
       ({ steer, throttle, hb } = this.navTo(this.escapeX, this.escapeY, ed));
       steer = clamp(steer + weave * 0.5, -1, 1);
       if (ed < 120) this.escapeT = 0; // arrived — back to normal AI
+      if (this.escapeT <= 0) this.fleeing = false; // the retreat is over
     } else if (engaged) {
       this.lastFocus = target;
       this.lootChannel = 0; // combat first — getting engaged aborts any pickup
@@ -395,8 +445,9 @@ class ArenaBot extends Car {
         wantFire = Math.abs(aim) < P.fireArc;
       } else {
         // each dive interval is an INDEPENDENT 4-10s roll (user spec) — bots
-        // never settle into a predictable dive rhythm
-        if (this.noDmgT > this.nextDashAt) { this.dashT = rand(1.0, 1.5); this.noDmgT = 0; this.nextDashAt = rand(4, 10); }
+        // never settle into a predictable dive rhythm. Bloodlust halves the
+        // wait: dive eagerly to finish a prey that's nearly dead.
+        if (this.noDmgT > this.nextDashAt * (bloodlust ? 0.5 : 1)) { this.dashT = rand(1.0, 1.5); this.noDmgT = 0; this.nextDashAt = rand(4, 10); }
         // ranged: CIRCLE-STRAFE via a RING-POINT GOAL (Gauntlet circler
         // pattern). Drive toward an actual point on a ring around the enemy,
         // a step ahead of where we sit on that ring — following it produces
@@ -465,6 +516,19 @@ class ArenaBot extends Car {
           else {
             ({ steer, throttle, hb } = this.navTo(best.x, best.y, bd));
             if (bd > 300) steer = clamp(steer + weave * 0.7, -1, 1); // different lines to the same pile
+            // cannon bots SHOOT the pile on the way in — their bullets harvest
+            // it into THEIR XP (mirrors the player's shoot-to-farm). Quiet
+            // (no audio): eight farming bots would be a constant drumroll.
+            if (this.weapon === "cannon" && bd > 60 && bd < 420 && this.fireTimer <= 0) {
+              const pa = angleDiff(Math.atan2(best.y - this.y, best.x - this.x), this.heading);
+              if (Math.abs(pa) < 0.35) {
+                this.fireTimer = 0.85 / this.reloadMul();
+                const fb = new Bullet(this.x + Math.cos(this.heading) * 24, this.y + Math.sin(this.heading) * 24,
+                  Math.atan2(best.y - this.y, best.x - this.x), 460, false, (10 + this.level) * this.weaponMul());
+                fb.shooter = this;
+                game.bullets.push(fb);
+              }
+            }
           }
         } else { this.lastFocus = null; throttle = 0.5; steer = weave; } // idle cruise wanders apart too
       }
@@ -568,7 +632,7 @@ class ArenaBot extends Car {
     // remember the attacker (hurtCar sets lastHitBy just before calling us) —
     // retaliation: they jump the targeting queue for a few seconds
     if (this.lastHitBy && this.lastHitBy !== this) { this.grudge = this.lastHitBy; this.grudgeT = RETALIATE_T; }
-    this.escapeT = 0; // survival beats boredom — being hit cancels a walk-away
+    if (!this.fleeing) this.escapeT = 0; // being hit cancels a bored walk-away — but NOT a retreat
     if (this.boredOf === this.lastHitBy) { this.boredOf = null; this.boredT = 0; } // ...and un-blacklists an attacker
     if (this.hp <= 0) this.deadFlag = true;
   }

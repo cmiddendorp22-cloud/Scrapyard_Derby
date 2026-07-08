@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Scrapyard Derby: Survival Gauntlet</title>
+<title>Scrapyard Derby</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -12,13 +12,12 @@
 
   <div id="start-screen" class="overlay">
     <h1>SCRAPYARD DERBY</h1>
-    <h2>SURVIVAL GAUNTLET</h2>
-    <p class="kbd-only">WASD / Arrow keys to drive &nbsp;&bull;&nbsp; hold SPACE to handbrake-drift &nbsp;&bull;&nbsp; LEFT CLICK / F to fire &nbsp;&bull;&nbsp; ESC to pause</p>
+    <p class="kbd-only">WASD / Arrow keys to drive &nbsp;&bull;&nbsp; hold SPACE to handbrake-drift &nbsp;&bull;&nbsp; LEFT CLICK / F to fire &nbsp;&bull;&nbsp; ESC For Menu</p>
     <p class="touch-only">Left stick to drive &nbsp;&bull;&nbsp; DRIFT to handbrake &nbsp;&bull;&nbsp; FIRE to shoot</p>
-    <p>Choose your gauntlet.</p>
+    <p>Choose Your Mode.</p>
     <div id="mode-select">
-      <button id="start-gauntlet-btn">SURVIVAL GAUNTLET
-        <span class="mode-sub">Round-based survival &mdash; clear waves, upgrade, don't die</span>
+      <button id="start-gauntlet-btn" class="mode-disabled" disabled>ENDLESS GAUNTLET
+        <span class="mode-sub">COMING SOON</span>
       </button>
       <button id="start-arena-btn">SCRAPYARD ARENA
         <span class="mode-sub">Open-world FFA &mdash; level up, loot parts off wrecks</span>
@@ -101,7 +100,6 @@
       <button class="stat-btn" id="stat-health" data-stat="health">HEALTH</button>
       <button class="stat-btn" id="stat-speed" data-stat="speed">SPEED</button>
       <button class="stat-btn" id="stat-reload" data-stat="reload">RELOAD</button>
-      <button class="stat-btn" id="stat-durability" data-stat="durability">DURABILITY</button>
       <button class="stat-btn" id="stat-regen" data-stat="regen">REGEN</button>
     </div>
   </div>

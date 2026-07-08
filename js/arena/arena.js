@@ -29,7 +29,7 @@ const PICKUP_RANGE = 180;         // a ground part within this range is "collect
 const DROP_DESPAWN = 30;          // seconds a dropped part lingers before vanishing
 const DROP_CAP = 40;              // max ground parts before the oldest is culled
 const STREAK_MILESTONES = [3, 5, 8]; // wreck-streak counts that trigger a RAMPAGE callout (then every +5)
-const SLOT_UNLOCKS = { 5: "armor", 10: "weapon2" }; // level → slot unlocked
+const SLOT_UNLOCKS = { 5: "armor" }; // level → slot unlocked (weapon2 is open from L1 — user call)
 const BOT_COUNT = 8;             // bots kept alive in the world
 const BOT_RESPAWN = 3.5;         // seconds before a wrecked bot returns
 
@@ -38,11 +38,11 @@ const BOT_RESPAWN = 3.5;         // seconds before a wrecked bot returns
 // for now the pick is stored on ArenaGame.startWeapon and shown on the car.
 const ARENA_WEAPONS = [
   { id: "cannon",    name: "CANNON",
-    desc: "Reliable forward gun. Point, shoot, farm scrap and pick off cars at range." },
+    desc: "Classic Gun Class" },
   { id: "minelayer", name: "MINELAYER",
-    desc: "Drop proximity mines and hook enemies into them. A trapper's toolkit." },
+    desc: "Drop proximity mines and hook enemies into them." },
   { id: "ram",       name: "RAM",
-    desc: "Armored plow and boost. No bullets — chase them down and crush them." },
+    desc: "Armored Front, boost into enemies and crush them." },
 ];
 
 class ArenaGame {
@@ -68,8 +68,8 @@ class ArenaGame {
     this.level = 1;
     this.xp = 0;
     this.statPoints = 0;
-    this.stats = { health: 0, speed: 0, reload: 0, durability: 0, regen: 0 };
-    this.slots = { armor: false, weapon2: false };
+    this.stats = { health: 0, speed: 0, reload: 0, regen: 0 };
+    this.slots = { armor: false }; // weapon2 needs no unlock — open from L1
     this.maxHp = 100;
     this.hp = 100;
     this.outOfCombat = 0;             // seconds since last damage (regen gate)
@@ -173,8 +173,7 @@ class ArenaGame {
     const slot = SLOT_UNLOCKS[this.level];
     if (slot && !this.slots[slot]) {
       this.slots[slot] = true;
-      this.banner(slot === "armor" ? "ARMOR SLOT UNLOCKED" : "2ND WEAPON SLOT UNLOCKED",
-        "loot one from a wreck");
+      this.banner("ARMOR SLOT UNLOCKED", "loot one from a wreck");
     } else {
       this.banner("LEVEL " + this.level, "+1 stat point");
     }
@@ -190,8 +189,8 @@ class ArenaGame {
     this.applyStats();
   }
 
-  // recompute derived values from stats. SPEED + HEALTH act now; RELOAD +
-  // DURABILITY are stored and take effect once weapons/combat land (item 5).
+  // recompute derived values from stats (health/speed/reload/regen) +
+  // equipped parts. Damage reduction comes from the ARMOR part alone.
   applyStats() {
     const L = this.loadout || {};
     // SPEED stat + ENGINE part both scale top speed & accel
@@ -203,10 +202,11 @@ class ArenaGame {
     const tt = L.tires ? L.tires.tier + 1 : 0;
     this.player.grip = 7 + 1.0 * tt;
     this.player.turnRate = 2.9 + 0.08 * tt;
-    // HEALTH stat + ARMOR part → max HP; DURABILITY stat + ARMOR → damage cut
+    // HEALTH stat + ARMOR part → max HP; ARMOR alone → damage cut (the
+    // DURABILITY stat was removed — per-tier value doubled to compensate)
     const at = L.armor ? L.armor.tier + 1 : 0;
     this.maxHp = 100 + this.stats.health * 25 + 20 * at;
-    this.partDmgReduce = this.stats.durability * 0.1 + 0.05 * at;
+    this.partDmgReduce = 0.10 * at;
     this.hp = Math.min(this.hp, this.maxHp);
   }
 
@@ -323,18 +323,33 @@ class ArenaGame {
       b.update(dt);
       if (b.dead) continue;
       if (b.x < ARENA.wall || b.x > ARENA.w - ARENA.wall || b.y < ARENA.wall || b.y > ARENA.h - ARENA.wall) { b.dead = true; continue; }
-      if (b.fromPlayer) { // player shots farm scrap
+      // shots farm scrap: player bullets → player XP, BOT bullets → that
+      // bot's XP (bots shoot-to-farm too; the Titan's shells don't harvest)
+      if (b.fromPlayer || (b.shooter && b.shooter.gainXp)) {
         let ate = false;
         for (const s of this.scrap) {
           if (s.dead || dist(b.x, b.y, s.x, s.y) >= s.radius * 0.8) continue;
           const drain = Math.min(b.damage * 0.6, s.amount);
-          s.amount -= drain; this.addXp(drain * XP_PER_SCRAP);
+          s.amount -= drain;
+          if (b.fromPlayer) this.addXp(drain * XP_PER_SCRAP);
+          else b.shooter.gainXp(drain * XP_PER_SCRAP);
           this.particles.scrapPuff(s.x, s.y);
           if (s.amount <= 0) s.dead = true;
           b.dead = true; ate = true; break;
         }
         if (ate) continue;
       }
+      // mines are SHOOTABLE: the third hit detonates one (AoE, credited to
+      // the shooter — popping your OWN minefield remotely is legal play)
+      let popped = false;
+      for (const m of this.mines) {
+        if (m.dead || dist(b.x, b.y, m.x, m.y) >= 9 + b.radius) continue;
+        m.hp = (m.hp ?? 3) - 1;
+        this.particles.sparks(b.x, b.y, Math.atan2(b.vy, b.vx) + Math.PI, 4, 140);
+        if (m.hp <= 0) this.detonateMine(m, b.shooter);
+        b.dead = true; popped = true; break;
+      }
+      if (popped) continue;
       // the Titan takes bullet damage too (any shot but its own)
       if (this.boss && !this.boss.dead && b.shooter !== this.boss &&
           dist(b.x, b.y, this.boss.x, this.boss.y) < this.boss.radius + b.radius) {
@@ -532,7 +547,10 @@ class ArenaGame {
         const px = boss.x + Math.cos(wa) * boss.radius, py = boss.y + Math.sin(wa) * boss.radius;
         this.particles.explosion(px, py); // the single rare+ drop comes from the CORE kill
         this.audio.playExplosion();
-        this.banner("TITAN PLATE TORN OFF", "core exposed — hit the gap");
+        // Titan chatter only when it's YOUR fight: you're nearby or you did it
+        if (source === this.player || dist(this.player.x, this.player.y, boss.x, boss.y) < 1000) {
+          this.banner("TITAN PLATE TORN OFF", "core exposed — hit the gap");
+        }
       }
     } else {
       boss.coreHp -= amount;
@@ -609,6 +627,26 @@ class ArenaGame {
     }
   }
 
+  // blow a mine where it sits: knockback + falloff damage to anything near,
+  // credited to `source` (whoever shot it — kill attribution flows through)
+  detonateMine(m, source) {
+    m.dead = true;
+    for (const car of this.cars()) {
+      if (this.isDeadCar(car)) continue;
+      const d = dist(m.x, m.y, car.x, car.y);
+      if (d > 90 + car.radius * 0.5) continue;
+      const f = clamp(1 - d / 140, 0.3, 1);
+      const ang = Math.atan2(car.y - m.y, car.x - m.x);
+      car.vx += Math.cos(ang) * 240 * f; car.vy += Math.sin(ang) * 240 * f;
+      this.hurtCar(car, m.dmg * f, source);
+    }
+    if (this.boss && !this.boss.dead && dist(m.x, m.y, this.boss.x, this.boss.y) < 90 + this.boss.radius) {
+      this.hurtBoss(m.x, m.y, m.dmg, source);
+    }
+    this.particles.explosion(m.x, m.y);
+    this.audio.playExplosion();
+  }
+
   updateMines(dt) {
     for (const m of this.mines) {
       if (m.dead) continue;
@@ -637,11 +675,11 @@ class ArenaGame {
     this.mines = this.mines.filter((m) => !m.dead);
   }
 
-  // DURABILITY reduces damage taken; hitting 0 HP wrecks the player.
+  // ARMOR reduces damage taken; hitting 0 HP wrecks the player.
   damagePlayer(amount) {
     if (this.dead) return;
     this.outOfCombat = 0; // taking a hit resets the regen timer
-    this.hp -= amount / (1 + this.partDmgReduce); // DURABILITY stat + ARMOR part
+    this.hp -= amount / (1 + this.partDmgReduce); // ARMOR part damage reduction
     if (this.hp <= 0) {
       this.dead = true;
       this.respawnT = 1.2; // brief wreck moment, then the death menu (main.js)
@@ -685,8 +723,8 @@ class ArenaGame {
     const lv = arenaLevelFromTotal(kept, LEVEL_CAP);
     this.level = lv.level; this.xp = lv.xp;
     this.statPoints = this.level - 1;                   // points for your reduced level
-    this.stats = { health: 0, speed: 0, reload: 0, durability: 0, regen: 0 };
-    this.slots = { armor: this.level >= 5, weapon2: this.level >= 10 };
+    this.stats = { health: 0, speed: 0, reload: 0, regen: 0 };
+    this.slots = { armor: this.level >= 5 };
     this.startWeapon = this.baseWeapon;
     this.loadout = this.freshLoadout(this.baseWeapon);
     this.applyStats();
@@ -725,10 +763,14 @@ class ArenaGame {
     return this.drops.filter((d) => !d.dead && dist(p.x, p.y, d.x, d.y) <= PICKUP_RANGE);
   }
 
-  // which loadout slot a part would fill: fixed for tires/engine/armor; weapons
-  // fill an empty weapon slot, else REPLACE the secondary (user rule)
+  // which loadout slot a part would fill: fixed for tires/engine/armor. For
+  // weapons, a drop matching an equipped weapon's TYPE targets THAT slot —
+  // including the primary (user rule: a higher-tier cannon upgrades your
+  // cannon wherever it sits). A new type fills empty-secondary-else-secondary.
   targetSlot(part) {
     if (part.slot !== "weapon") return part.slot;
+    if (this.loadout.weapon1 && this.loadout.weapon1.type === part.type) return "weapon1";
+    if (this.loadout.weapon2 && this.loadout.weapon2.type === part.type) return "weapon2";
     if (!this.loadout.weapon1) return "weapon1";
     if (!this.loadout.weapon2) return "weapon2";
     return "weapon2";
@@ -774,8 +816,15 @@ class ArenaGame {
   equipPart(drop) {
     if (!drop || drop.dead || this.dead) return false;
     if (dist(this.player.x, this.player.y, drop.x, drop.y) > PICKUP_RANGE) return false;
-    drop.dead = true; // claim it NOW
     const slot = this.targetSlot(drop.part);
+    // HARD GUARD (user rule): one weapon TYPE per car — never two cannons/
+    // rams/minelayers. targetSlot's type-matching makes this structurally
+    // unreachable today; the guard keeps future weapons/equip paths honest.
+    if (drop.part.slot === "weapon") {
+      const other = slot === "weapon1" ? this.loadout.weapon2 : this.loadout.weapon1;
+      if (other && other.type === drop.part.type) return false;
+    }
+    drop.dead = true; // claim it NOW
     const old = this.loadout[slot];
     this.loadout[slot] = drop.part;
     if (slot === "weapon1") this.startWeapon = drop.part.type; // keep primary render in sync
