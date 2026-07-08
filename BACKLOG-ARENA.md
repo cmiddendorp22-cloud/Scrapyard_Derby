@@ -200,6 +200,14 @@ everyone to hurt everyone).
    - BACKLOG: "tier adds strength" — higher-tier cannons fire tougher bullets
      (more clash strength), so gear also wins bullet duels. Deferred (user
      call: flat 1/3 for now).
+   - BACKLOG: TIRES tier → stronger/faster HANDBRAKE — better wheels should
+     improve handbrake response, not just grip/turn: raise `handbrakeBoost`
+     (Car's handbrake steering multiplier, base 1.3 — the Gauntlet's Drift
+     Master upgrade already proves the dial) and/or shorten the slide's
+     recovery so cuts snap quicker per tier. Applies to the player AND bots
+     (bots now use the handbrake for nose-cuts/parking, so their tier shows
+     in their driving too). Wire in `applyStats` alongside the existing
+     tires→grip/turn effects.
    - BACKLOG: dropped-part DESPAWN BLINK — a ground part should BLINK as it
      nears its 30s despawn, blinking FASTER the closer it is to vanishing (so
      you can tell a drop is about to expire and race for it). Cosmetic-only
@@ -235,6 +243,20 @@ source (`cars()`/`hurtCar()`/`isDeadCar()` unify it), with `shooter`/`owner`/
 respawn resets to level 1 (the locked "death resets" rule; head-start
 softening is item 9). Bots render as red cars with name+level+HP bar; red dots
 on the minimap.
+- **BACKLOG: AI chase-dodge** — when one bot is actively pursuing another,
+the chased bot should dodge laterally (left/right) rather than running in a
+straight line, so the pursuer cannot get easy sustained shots from directly
+behind. Tune this as a bot-AI behavior with a close-range/chase threshold and
+a short dodge window so it feels intentional rather than erratic.
+- **BACKLOG: AI mine avoidance** — bots should actively avoid enemy mines that
+are not their own, including by steering away or changing course when a mine is
+nearby, rather than driving straight through it. This should be a scoped
+behavior for hostile mines and should stay readable/consistent so it doesn't
+make bot movement feel random.
+- **BACKLOG: stronger bosses** — the arena boss encounters should feel more
+substantial and threatening over time. Add tuning ideas such as higher HP,
+stronger attack patterns, more aggressive movement, and more rewarding drops
+so boss fights are more distinct and memorable than a single standard fight.
 **Bot SELF-LEVELING** (user request): bots earn XP the same way the player does
 — farming scrap (`gainXp` on drive-over drain) AND kills (attributed via the
 chain above) — on the SHARED `arenaXpToNext` curve. On level-up a bot spends
@@ -252,13 +274,26 @@ combat or a rival arriving aborts the channel. On completion `botEquip` claims
 the drop (single-access, same as the player), swaps its old part out where the
 loot sat, updates `bot.weapon` if it was a gun, and re-applies stats.
 **FFA bot TARGETING** (user request): bots fight EACH OTHER too. `pickTarget`
-scores every car in range by effective distance — the player counts ×0.65
-(~35% priority, user pick), bot-vs-bot engage range is shorter (`BOT_VS_BOT`
+scores every car in range by effective distance — the player counts
+×`persona.playerBias` (a per-SPAWN temperament roll, 0.45-0.85 = 55%-15%
+priority: some bots hunt the player, some mostly ignore you — user spec,
+35% ± 20 uniform), bot-vs-bot engage range is shorter (`BOT_VS_BOT`
 450 vs 560), a RECENT ATTACKER (grudge, set in `hurt` off `lastHitBy`, lasts
 4s) counts ×0.5 and can be hunted from 900px (snipe a farmer and it comes for
-you), and the current target is sticky (×0.85, no flip-flopping). Nearest
-effective target wins; Titan-swarm/loot/farm unchanged below combat.
+you), and the current target is sticky (persona.sticky, no flip-flopping).
+Nearest effective target wins; Titan-swarm/loot/farm unchanged below combat.
 NOT yet: distinct per-weapon bot AI, mine HOOK.
+
+**BACKLOG — evasive driving when CHASED:** when an AI is being chased/shot from
+behind by another car (attacker roughly on its tail + closing or firing), the
+chased bot should DODGE — weave/juke left-right instead of fleeing in a straight
+line, so the pursuer doesn't get free shots down a predictable lane. Detect
+"being chased": an enemy within ~300-400px in the REAR arc (attacker's position
+behind, its velocity/heading pointed at us), or taking hits from behind
+(`lastHitBy` + hit direction). Response: overlay a serpentine steer (sin-based
+weave with a per-bot seeded phase/period so bots don't all weave identically —
+ties into the AI-randomness item), maybe brief handbrake feints. Should also
+apply when fleeing the player. Keep seeded-deterministic.
 
 **BACKLOG — bigger bot NAME pool:** `BOT_NAMES` in arena-bot.js is only ~20, so
 duplicate names show up on the leaderboard/tags in a single run (e.g. two
@@ -277,20 +312,13 @@ FRAGMENT, DEBRIS, WRECKING-BALL, DEMOLISHER, VULTURE, SCAVENGER, MAGPIE.
 (Also consider: guarantee no dup names live at once by drawing without
 replacement from the pool each run.)
 
-**BACKLOG — smarter shot LEADING (per target movement):** bot cannons currently
-use a crude fixed lead (`target.v × flightTime × 0.5`) — a flat under-lead that
-was tuned so shots vs a CURVING (orbiting) target don't overshoot the arc, but
-it's a compromise that's wrong for other cases. Make the lead ADAPT to how the
-target is actually moving: full/near-full lead for a target moving in a straight
-line (easy to predict → higher hit rate), reduced lead for a hard-turning/
-orbiting target (linear extrapolation overshoots a curve), and bias toward the
-target's TYPICAL/current speed for erratic ones. The Gauntlet GUNNER already
-solved this well — acceleration-aware lead using only the along-track accel
-component, trusted ~0.5s then regressing toward typical speed (see main game
-changelog 2026-07-03 "Acceleration-aware circler aim"; naive ½at² made it worse,
-documented so it isn't re-attempted). Port/adapt that model to `ArenaBot` cannon
-fire, with tuning differences as needed for the Arena's faster bullets + bigger
-map + FFA targets. Keep it seeded-deterministic.
+✅ SMARTER SHOT LEADING DONE (full Gauntlet-gunner port, user pick):
+`trackArenaMotion` maintains smoothed-accel + typical-speed trackers on every
+arena car (player/bots/Titan); `arenaAimPoint` predicts with along-track accel
+only (trusted 0.5s, regressed toward typical speed, flight time refined).
+Bot cannons use it (`persona.lead` re-banded 0.8-1.1 around the smart
+prediction); the Titan's shell leads at 0.5 (weaker — dodgeable by turning,
+was fire-at-current-position). See changelog 2026-07-07.
 
 **BACKLOG — AI PREDICTABILITY / "conga line" (user, screenshot):** bots
 sometimes trail each other around the map in a line — most visible with two of
@@ -308,6 +336,38 @@ target hysteresis/indecision so they don't all lock the exact same pick. Keep it
 seeded-deterministic. (Screenshot evidence: two red minelayer cars overlapping
 along the left hazard-striped wall, both L6, leaderboard shows several bots at
 L7-L8 — a mid-game clump.)
+✅ LAYER (a) DONE (user pick: minimal-first): per-bot seeded `persona` rolled in
+the ArenaBot constructor — orbitRange ±60-70, orbitBias ±0.25, throttleMul
+0.86-1.0, weavePhase/Freq/Amp (a sim-clock sine wobble applied to combat steer,
+long drives >300px, and idle cruising; OFF near pickups so parking stays exact),
+plus `orbitDir` rolled instead of id-parity. Engagement ranges (450/560) left
+EXACT. Still open if clumping persists: (b) periodic orbit-flip/juke timers,
+(c) separation steering, (d) target hysteresis — and the standstill-dash from
+the evasive-driving entry below.
+✅ WALL-FIGHT fix DONE (user report: edge duels hugged the wall in a shooting
+line): combat orbit is now a RING-POINT GOAL clamped into the arena margin
+("flatten to safe line") + an N/E/S/W wall-identity U-turn that flips orbitDir
+when circling would carry the bot along/into its near wall (1s cooldown,
+resize-safe — all bounds from ARENA dims). See changelog 2026-07-07.
+✅ DUEL RESOLUTION DONE (user picks A+C+D): duels ESCALATE instead of orbiting
+forever or mutually fleeing — orbit tightens after persona.escalateT
+(spiral-in), a no-damage standoff past persona.dashAfter triggers a 1-1.5s
+dive, and a give-up DURING combat escalates (tight orbit + dive) instead of
+blacklist+walk-away. hurtCar zeroes the attacker's noDmgT (any damage counts).
+✅ GIVE-UP factor DONE (user request + picks: area-anchor detection,
+blacklist + walk-away response): confined to a 400px bubble past
+persona.giveUpT (16-24s) → the current focus (target/drop/pile) is
+blacklisted 10s and the bot commits to a seeded far point for 4-6s;
+getting hit cancels the escape + un-blacklists the attacker.
+✅ COMBAT-RANDOMNESS pass DONE (user picks 2,3,4,6,7 + wall-escape delay):
+persona now also rolls aimErr (per-shot scatter), lead 0.35-0.65, fireArc
+1.7-2.3, sticky 0.75-0.95, flipCdT 0.8-1.4s, unstickDelay 0.5-1.1s. Declined
+for now: fire-cadence jitter, ram charge jitter, boss courage.
+✅ RAM-vs-RAM circling fix DONE (user report): rams steer at an INTERCEPT
+point (persona.ramLead) + brake-to-turn after persona.ramPatience seconds
+off-nose; charge arms off the intercept aim. Per-bot rolls desync the
+maneuvers (user rule: slight seeded randomness in most bot behaviors so
+identical states never mirror into loops). See changelog 2026-07-07.
 
 6. **Central boss + roaming events (convergence)** — ⏳ CENTRAL BOSS DONE
    - ✅ **JUNK TITAN** (`ArenaBoss`, js/arena/arena-boss.js): a giant slow tank
@@ -405,13 +465,20 @@ L7-L8 — a mid-game clump.)
      Bot-vs-bot combat also got a stalemate fix here: 0.85-rad fire cone,
      velocity-LEAD cannon shots, and a 1.2s `aimStuckT` handbrake-pivot that
      breaks mutual-orbit circling (the Gauntlet's old pursuit-circle disease).
+   - BACKLOG: spectate LOADOUT view — while spectating, show the watched bot's
+     equipped parts (its tires/engine/weapon/armor + tiers, tier-colored like
+     the player's own panel). Natural home: reuse/retarget the `#arena-loadout`
+     DOM panel (read-only — no equip buttons) or a compact canvas readout under
+     the "SPECTATING: name" label; swap contents when the camera hands off or
+     NEXT cycles. Lets you scout builds and see WHY a bot is winning.
    - BACKLOG: spectate KILLER hand-off — if the car you're spectating gets
      wrecked by another car (any player/bot — NOT the boss), auto-swap the
      spectate camera to whoever killed it (its `lastHitBy`) so you keep watching
      the action instead of a wreck. Falls back to the normal next-living-bot
-     cycle if the killer is the boss, is dead, or is you. (Hook: on a spectated
-     car's death, read `lastHitBy`; set `spectateIdx` to that car if it's a
-     living bot, else advance normally.)
+     pick if the killer is the boss, is dead, or is you. (Hook: the camera now
+     tracks `spectateCar` by REFERENCE — 2026-07-07 stability fix, view only
+     moves when THAT car dies; on that death, set `spectateCar = lastHitBy`
+     when it's a living bot instead of defaulting to the first living one.)
    - The HEAD-START softening below is what's left.
    - Persistent profile in localStorage (→ accounts later): consecutive-day
      streak, lifetime games, total score, ads watched.

@@ -15,18 +15,69 @@ const BOT_NAMES = [
 
 const BOT_ENGAGE = 560;      // engages the PLAYER within this range
 const BOT_VS_BOT = 450;      // engages OTHER BOTS within this (shorter) range
-const PLAYER_BIAS = 0.65;    // player's distance counts ×0.65 → ~35% priority
+// (player priority is per-bot temperament: persona.playerBias 0.45-0.85,
+//  i.e. 35% ± 20% — rolled at spawn, some bots hunt you, some ignore you)
 const RETALIATE_T = 4;       // seconds a "who just hit me" grudge lasts
 const RETALIATE_RANGE = 900; // a grudge target can be hunted from this far out
-const STICKY_MUL = 0.85;     // current target's distance bonus (no flip-flopping)
 const GRUDGE_MUL = 0.5;      // recent attacker's distance bonus (jumps the queue)
+// (target stickiness is per-bot: persona.sticky 0.75-0.95)
 const BOT_BOSS_RANGE = 1000; // will divert to swarm the central Titan within this range
 const BOT_ORBIT_RANGE = 250;  // ranged bots circle-strafe the target at this distance
-const BOT_ORBIT_ANGLE = Math.PI / 2; // base steer offset from the target: ~90° = drive AROUND it
 const BOT_LOOT_RANGE = 600;   // notices ground-part UPGRADES within this range
 const BOT_LOOT_CHANNEL = 2;   // seconds a bot must sit over a part to claim it
 const BOT_LOOT_CONTEST = 200; // won't seek a drop if any OTHER car is this close to it
 const BOT_BASE = { accel: 600, maxSpeed: 355 };
+
+// -- shot-leading support (ported from the Gauntlet gunner's proven model) --
+
+// per-car motion trackers: smoothed acceleration (~0.15s EMA, so collision
+// spikes don't whip aim around) + typical speed (~1.5s EMA). Arena calls this
+// for every car each step (player, bots, Titan); the Gauntlet Player keeps its
+// own inline version.
+function trackArenaMotion(c, dt) {
+  const sp = Math.hypot(c.vx, c.vy);
+  if (c._pvx === undefined) { c._pvx = c.vx; c._pvy = c.vy; c.smoothAx = 0; c.smoothAy = 0; c.smoothSpeed = sp; }
+  const blend = Math.min(1, dt / 0.15);
+  c.smoothAx += ((c.vx - c._pvx) / dt - c.smoothAx) * blend;
+  c.smoothAy += ((c.vy - c._pvy) / dt - c.smoothAy) * blend;
+  c._pvx = c.vx; c._pvy = c.vy;
+  c.smoothSpeed += (sp - c.smoothSpeed) * Math.min(1, dt / 1.5);
+}
+
+// Acceleration-aware aim point. Only the ALONG-TRACK component of the target's
+// smoothed acceleration is used — speed changes (braking/throttle) are bounded
+// and predictable (speed can't drop below 0 or exceed max), so a hard brake
+// predicts the shot landing where the slide dies. Perpendicular acceleration
+// (turning) is a coin flip over a shell's flight and is IGNORED — naive ½at²
+// was measured WORSE in the Gauntlet (12% vs 39% hits); don't re-attempt it.
+// The speed trend is trusted for `tau`s then regresses 50% toward the target's
+// typical speed; flight time is refined once. `leadMul` scales the final lead.
+function arenaAimPoint(shooter, target, bulletSpeed, leadMul) {
+  const tau = 0.5;
+  let t = dist(shooter.x, shooter.y, target.x, target.y) / bulletSpeed;
+  let tx = target.x, ty = target.y;
+  const maxSp = target.maxSpeed || 400;
+  for (let pass = 0; pass < 2; pass++) {
+    const ps = Math.hypot(target.vx || 0, target.vy || 0);
+    if (ps > 20) {
+      const dvx = target.vx / ps, dvy = target.vy / ps;
+      const aAlong = (target.smoothAx ?? 0) * dvx + (target.smoothAy ?? 0) * dvy;
+      const ta = Math.min(t, tau);
+      let s1 = ps + aAlong * ta, travelWindow;
+      if (s1 <= 0) { travelWindow = (ps * ps) / (2 * Math.max(1, -aAlong)); s1 = 0; } // braking to a stop
+      else { if (s1 > maxSp) s1 = maxSp; travelWindow = ((ps + s1) / 2) * ta; }
+      const rest = 0.5 * s1 + 0.5 * (target.smoothSpeed ?? ps); // maneuver likely over → usual pace
+      const travel = travelWindow + rest * (t - ta);
+      tx = target.x + dvx * travel * leadMul;
+      ty = target.y + dvy * travel * leadMul;
+    } else { // near-stationary: plain lead
+      tx = target.x + (target.vx || 0) * t * leadMul;
+      ty = target.y + (target.vy || 0) * t * leadMul;
+    }
+    t = dist(shooter.x, shooter.y, tx, ty) / bulletSpeed;
+  }
+  return { x: tx, y: ty };
+}
 
 // shared XP-to-next-level curve (players + bots use the same growth)
 function arenaXpToNext(level) { return 20 + level * level * 6; }
@@ -64,7 +115,47 @@ class ArenaBot extends Car {
     this.grudge = null;                  // who hit me recently (retaliation target)
     this.grudgeT = 0;                    // grudge time left
     this.combatTarget = null;            // sticky current target (no flip-flopping)
-    this.orbitDir = (this.id % 2) ? 1 : -1; // circle-strafe direction (split across bots)
+    // PERSONALITY: seeded per-bot quirks so no two bots drive identically —
+    // different preferred ranges/orbits/wobble break the mirror-image movement
+    // (conga lines, mutual-cancel standstills). Sim-RNG → deterministic per seed.
+    this.persona = {
+      orbitRange: BOT_ORBIT_RANGE + rand(-60, 70), // preferred fighting distance
+      orbitBias: rand(-0.25, 0.25),                // tighter or wider circling
+      throttleMul: rand(0.86, 1.0),                // how hard they drive in combat
+      weavePhase: rand(0, TAU),                    // personal steering-wobble phase
+      weaveFreq: rand(1.6, 2.6),                   // wobble speed (rad per sim-second)
+      weaveAmp: rand(0.10, 0.30),                  // wobble strength
+      ramLead: rand(0.55, 0.95),                   // how much a ram leads its target
+      ramPatience: rand(0.7, 1.3),                 // seconds off-nose before braking to turn
+      ramSnapChance: rand(0.45, 0.8),              // odds a misalignment triggers a handbrake nose-cut
+      aimErr: rand(0.02, 0.05),                    // per-shot aim scatter (~1-3°): marksmen vs sprayers
+      lead: rand(0.8, 1.1),                        // lead multiplier around the SMART prediction (under/over-leaders)
+      fireArc: rand(1.7, 2.3),                     // will-shoot cone: patient shooters vs spray-and-pray
+      sticky: rand(0.75, 0.95),                    // target loyalty: duelists vs opportunists
+      flipCdT: rand(0.8, 1.4),                     // wall U-turn cooldown (desyncs wall escapes)
+      unstickDelay: rand(0.5, 1.1),                // how long pinned-on-wall before reversing out
+      giveUpT: rand(16, 24),                       // seconds confined to a small area before giving up
+      // temperament toward the PLAYER, rolled once per spawn (user spec):
+      // 35% ± 20% priority → distance multiplier 0.45 (55%: player-hunter)
+      // to 0.85 (15%: mostly ignores you unless provoked)
+      playerBias: rand(0.45, 0.85),
+      escalateT: rand(6, 10),                      // seconds dueling before the orbit starts tightening
+      escalateRate: rand(0.05, 0.10),              // orbit shrink per second once escalating
+    };
+    // duel-resolution state: fights ESCALATE instead of orbiting forever
+    this.fightT = 0; this.fightTarget = null;      // time spent on the current opponent
+    this.noDmgT = 0;                               // engaged time since I last dealt damage
+    this.dashT = 0;                                // active dive-attack time left
+    this.ramSnapT = 0; this.ramSnapCd = 0;         // ram handbrake nose-cut window + re-roll cooldown
+    this.nextDashAt = rand(4, 10);                 // no-damage seconds until the next dive — re-rolled per dive
+    // GIVE-UP state: anchor bubble detector + boredom blacklist + escape run
+    this.anchorX = x; this.anchorY = y; this.anchorT = 0;
+    this.lastFocus = null;               // what I'm currently pursuing (car/drop/pile)
+    this.boredOf = null; this.boredT = 0; // blacklisted focus ("bored of you")
+    this.escapeX = 0; this.escapeY = 0; this.escapeT = 0; // committed walk-away
+    this.offNoseT = 0;                   // time unable to point at the ram target
+    this.orbitDir = pick([1, -1]);       // circle-strafe direction (seeded roll)
+    this.flipCd = 0;                     // U-turn cooldown (wall-aware orbit flip)
     this.stuckT = 0;                     // seconds barely moving while engaged (wedge breaker)
     this.streak = 0;                     // consecutive wrecks (RAMPAGE callouts)
     this.deadFlag = false;               // (Car has .dead; keep our own so we control removal)
@@ -130,12 +221,13 @@ class ArenaBot extends Car {
   pickTarget(game) {
     let best = null, bs = 1e9;
     const consider = (c, range) => {
+      if (c === this.boredOf) return; // gave up on them recently
       const d = dist(this.x, this.y, c.x, c.y);
       if (d > (c === this.grudge ? RETALIATE_RANGE : range)) return;
       let eff = d;
-      if (c === game.player) eff *= PLAYER_BIAS;
+      if (c === game.player) eff *= this.persona.playerBias; // per-bot temperament (0.45 hunter … 0.85 passive)
       if (c === this.grudge) eff *= GRUDGE_MUL;
-      if (c === this.combatTarget) eff *= STICKY_MUL;
+      if (c === this.combatTarget) eff *= this.persona.sticky; // per-bot loyalty
       if (eff < bs) { bs = eff; best = c; }
     };
     if (!game.isDeadCar(game.player)) consider(game.player, BOT_ENGAGE);
@@ -143,20 +235,26 @@ class ArenaBot extends Car {
     return best;
   }
 
-  // drive TO a point (scrap / loot) with BRAKE-TO-TURN: at full throttle the
-  // turning circle is wider than a close target, so the car orbits it forever
-  // ("moth orbit"). Slowing when close AND off-angle shrinks the turn radius so
-  // the nose swings straight onto the item and the car arrives.
+  // drive TO a point (scrap / loot / escape) with SPEED-AWARE ARRIVAL:
+  // reducing throttle alone never sheds drift momentum (drag is weak by
+  // design), which is what made fast bots orbit piles — so the car carries a
+  // distance-based speed BUDGET and genuinely BRAKES when over it. And when
+  // it's near the item but not FACING it, a handbrake tap craters the grip so
+  // the steering whips the nose directly onto the target (user spec).
   navTo(tx, ty, d) {
     const a = angleDiff(Math.atan2(ty - this.y, tx - this.x), this.heading);
     const aa = Math.abs(a);
     const steer = clamp(a * 2.6, -1, 1);
     let throttle;
-    if (aa > 1.2) throttle = 0.28;                     // sharply off → slow to pivot toward it
+    const budget = clamp(d * 2.2, 70, this.maxSpeed);  // how fast is OK at this distance
+    if (this.speed > budget) throttle = -0.55;         // over budget → real braking
+    else if (aa > 1.2) throttle = 0.28;                // sharply off → slow to pivot toward it
     else if (d < 90 && aa > 0.35) throttle = 0.15;     // close but off-angle → crawl on
     else if (d < 160) throttle = aa > 0.6 ? 0.35 : 0.6; // arriving → ease down (no overshoot)
     else throttle = aa > 0.8 ? 0.5 : 0.9;              // cruising in from afar
-    return { steer, throttle };
+    // handbrake nose-snap: close + misaligned + moving → cut and FACE it
+    const hb = d < 140 && aa > 0.5 && this.speed > 60;
+    return { steer, throttle, hb };
   }
 
   // PARK on an item and stay there (scrap draining / loot channel). Gentle stop
@@ -199,6 +297,32 @@ class ArenaBot extends Car {
 
   update(dt, game) {
     if (this.grudgeT > 0) { this.grudgeT -= dt; if (this.grudgeT <= 0) this.grudge = null; }
+    if (this.flipCd > 0) this.flipCd -= dt;
+    if (this.boredT > 0) { this.boredT -= dt; if (this.boredT <= 0) this.boredOf = null; }
+    // GIVE-UP detector (user rule): confined to a ~400px bubble longer than my
+    // personal patience → blacklist whatever I was pursuing + walk away. The
+    // bubble catches ANY loop shape (circling fights, wall dances, pickup
+    // oscillation) without per-behavior bookkeeping. Getting hurt cancels the
+    // walk-away (survival beats boredom — see hurt()).
+    if (dist(this.x, this.y, this.anchorX, this.anchorY) > 400) {
+      this.anchorX = this.x; this.anchorY = this.y; this.anchorT = 0;
+    } else this.anchorT += dt;
+    if (this.escapeT <= 0 && this.anchorT > this.persona.giveUpT) {
+      this.anchorT = 0;
+      if (this.combatTarget && this.lastFocus === this.combatTarget) {
+        // stuck IN A FIGHT: escalate, don't flee — force the tight-orbit phase
+        // + an immediate dive so the duel resolves instead of both walking off
+        this.fightT = Math.max(this.fightT, this.persona.escalateT + 6);
+        this.dashT = 1.2;
+      } else {
+        this.boredOf = this.lastFocus; this.boredT = 10; // done with THAT thing for a while
+        const ea = rand(0, TAU), er = rand(700, 1100);   // seeded far-off point, clamped in-world
+        const em = ARENA.wall + 140;
+        this.escapeX = clamp(this.x + Math.cos(ea) * er, em, ARENA.w - em);
+        this.escapeY = clamp(this.y + Math.sin(ea) * er, em, ARENA.h - em);
+        this.escapeT = rand(4, 6);
+      }
+    }
     // pick a combat target: any car in range (player slightly prioritized,
     // recent attackers hunted — FFA), else the central Titan if near (bots
     // swarm it → the "always contested" gravity well). Otherwise loot/farm.
@@ -212,33 +336,113 @@ class ArenaBot extends Car {
     const engaged = target !== null;
     const aim = engaged ? angleDiff(Math.atan2(target.y - this.y, target.x - this.x), this.heading) : 0;
 
-    let throttle = 0, steer = 0, wantFire = false;
-    if (engaged) {
+    // duel clock: time spent fighting THIS opponent (drives escalation) + time
+    // engaged without landing damage (drives the standoff-breaker dive)
+    if (engaged && target === this.fightTarget) this.fightT += dt;
+    else { this.fightT = 0; this.fightTarget = target; }
+    if (engaged && this.weapon !== "ram") this.noDmgT += dt; else this.noDmgT = 0;
+
+    let throttle = 0, steer = 0, wantFire = false, hb = false;
+    // personal steering wobble (sim-clock driven → deterministic); applied in
+    // combat + on long drives so identical bots take visibly different lines
+    const P = this.persona;
+    const weave = Math.sin(game._t * P.weaveFreq + P.weavePhase) * P.weaveAmp;
+    let ramAim = aim; // rams aim at the INTERCEPT point (set below)
+    const escaping = this.escapeT > 0;
+    if (escaping) {
+      // gave up on a loop — commit to the walk-away point, then resume life
+      this.escapeT -= dt;
+      this.lootChannel = 0;
+      const ed = dist(this.x, this.y, this.escapeX, this.escapeY);
+      ({ steer, throttle, hb } = this.navTo(this.escapeX, this.escapeY, ed));
+      steer = clamp(steer + weave * 0.5, -1, 1);
+      if (ed < 120) this.escapeT = 0; // arrived — back to normal AI
+    } else if (engaged) {
+      this.lastFocus = target;
       this.lootChannel = 0; // combat first — getting engaged aborts any pickup
-      const surf = td - (target.radius || 0); // to the target's SURFACE (Titan is huge)
       if (this.weapon === "ram") {
-        // ram: line up and CHARGE straight through the target
-        steer = clamp(aim * 2.4, -1, 1);
-        throttle = Math.abs(aim) > 1 ? 0.4 : 0.9;
+        // ram: INTERCEPT — chase where the target will be, not where it is.
+        // Two rams steering at each other's current position circle forever
+        // (each stays ~90° off the other's nose, so the charge never arms);
+        // leading the target collapses the circle into a head-on. Per-bot
+        // ramLead + weave desync the maneuver so two rams never mirror it.
+        const tt = td / Math.max(120, this.speed + 60); // rough time-to-reach
+        const ix = target.x + (target.vx || 0) * tt * P.ramLead;
+        const iy = target.y + (target.vy || 0) * tt * P.ramLead;
+        ramAim = angleDiff(Math.atan2(iy - this.y, ix - this.x), this.heading);
+        steer = clamp(ramAim * 2.4 + weave * 0.5, -1, 1);
+        // BRAKE-TO-TURN (Gauntlet rammer fix): badly off-nose for longer than
+        // this bot's personal patience → slow down so the nose can swing on
+        if (Math.abs(ramAim) > 0.6) this.offNoseT += dt; else this.offNoseT = 0;
+        if (this.offNoseT > P.ramPatience) throttle = 0.25;
+        else throttle = Math.abs(ramAim) > 1 ? 0.4 : 0.9;
+        // handbrake NOSE-CUT (user: often, not always): a misaligned, moving
+        // ram may whip its front onto the enemy — each opportunity rolls
+        // against persona.ramSnapChance (with a cooldown between rolls), and
+        // never mid-launch (the charge stays committed).
+        if (this.ramSnapT > 0) { this.ramSnapT -= dt; hb = true; }
+        else if (this.ramSnapCd > 0) this.ramSnapCd -= dt;
+        else if (this.ramBoostT <= 0 && Math.abs(ramAim) > 0.6 && this.speed > 90 && td < 500) {
+          this.ramSnapCd = rand(0.8, 1.6);
+          if (rand(0, 1) < P.ramSnapChance) this.ramSnapT = rand(0.25, 0.45);
+        }
+      } else if (this.dashT > 0) {
+        // STANDOFF-BREAKER: no damage landed for too long → commit to a short
+        // straight dive at the target, guns blazing, to force the exchange
+        this.dashT -= dt;
+        steer = clamp(aim * 2.4 + weave * 0.4, -1, 1);
+        throttle = 1.0;
+        wantFire = Math.abs(aim) < P.fireArc;
       } else {
-        // ranged: CIRCLE-STRAFE — drive AROUND the target instead of nosing
-        // straight at it (which caused the radial back-and-forth). Bullets
-        // auto-aim, so steering toward a TANGENT point (offset ~90° from the
-        // target, spiraling in/out to hold range) keeps the car moving
-        // laterally around the enemy while still shooting it.
-        const toTarget = Math.atan2(target.y - this.y, target.x - this.x);
-        const rangeErr = clamp((surf - BOT_ORBIT_RANGE) / 260, -1, 1); // + far / - close
-        const orbitAng = clamp(BOT_ORBIT_ANGLE - rangeErr * 1.2, 0.3, 2.6); // direct-in when far, orbit at range, back off when close
-        const desired = toTarget + this.orbitDir * orbitAng;
-        steer = clamp(angleDiff(desired, this.heading) * 2.2, -1, 1);
-        throttle = 0.8; // always on the move — that's the "driving around"
+        // each dive interval is an INDEPENDENT 4-10s roll (user spec) — bots
+        // never settle into a predictable dive rhythm
+        if (this.noDmgT > this.nextDashAt) { this.dashT = rand(1.0, 1.5); this.noDmgT = 0; this.nextDashAt = rand(4, 10); }
+        // ranged: CIRCLE-STRAFE via a RING-POINT GOAL (Gauntlet circler
+        // pattern). Drive toward an actual point on a ring around the enemy,
+        // a step ahead of where we sit on that ring — following it produces
+        // the orbit, and being inside/outside the ring self-corrects range.
+        // The point is FLATTENED into the arena's safe margin (user pick:
+        // option A), so near a wall the goal itself bends the fight back
+        // toward open ground instead of avoidance fighting the orbit.
+        // ESCALATION: the longer this duel runs, the TIGHTER the ring — fights
+        // spiral inward (each bot at its own seeded rate) so damage eventually
+        // lands and someone wins, instead of orbiting at range forever.
+        const tight = Math.max(0.35, 1 - Math.max(0, this.fightT - P.escalateT) * P.escalateRate);
+        const cur = Math.atan2(this.y - target.y, this.x - target.x); // my angle on the ring
+        const ahead = cur + this.orbitDir * (0.55 + P.orbitBias);     // a personal step ahead
+        const ring = P.orbitRange * tight + (target.radius || 0);     // surface distance (Titan-safe)
+        const m = ARENA.wall + 110; // safe margin — derives from ARENA, resize-proof
+        const gx = clamp(target.x + Math.cos(ahead) * ring, m, ARENA.w - m);
+        const gy = clamp(target.y + Math.sin(ahead) * ring, m, ARENA.h - m);
+        steer = clamp(angleDiff(Math.atan2(gy - this.y, gx - this.x), this.heading) * 2.2 + weave, -1, 1);
+        throttle = 0.8 * P.throttleMul; // always on the move — that's the "driving around"
+        // U-TURN safety net: identify which wall (N/E/S/W from ARENA dims) I'm
+        // pressed against; if my circling direction carries me ALONG/INTO it
+        // rather than toward the interior, flip the orbit (cooldown so it
+        // can't rapid-flip). Covers the enemy-pinned-flat-on-the-wall case.
+        if (this.flipCd <= 0) {
+          const band = ARENA.wall + 130;
+          let nx = 0, ny = 0; // inward normal of the wall(s) I'm near
+          if (this.x < band) nx = 1;                 // West wall → interior is +x
+          else if (this.x > ARENA.w - band) nx = -1; // East wall → interior is -x
+          if (this.y < band) ny = 1;                 // North wall → interior is +y
+          else if (this.y > ARENA.h - band) ny = -1; // South wall → interior is -y
+          if (nx !== 0 || ny !== 0) {
+            // my travel direction on the ring = tangent at my ring angle
+            const tx = -Math.sin(cur) * this.orbitDir, ty = Math.cos(cur) * this.orbitDir;
+            if (tx * nx + ty * ny < -0.3) { this.orbitDir *= -1; this.flipCd = P.flipCdT; } // personal cadence
+          }
+        }
       }
-      // fire across a wide arc (shots lead + auto-aim, so the nose need not be dead-on)
-      wantFire = this.weapon !== "ram" && Math.abs(aim) < 2.0;
+      // fire across a wide arc (shots lead + auto-aim, so the nose need not be
+      // dead-on) — the arc width is a persona roll: patient vs spray-and-pray
+      wantFire = this.weapon !== "ram" && Math.abs(aim) < P.fireArc;
     } else {
+      this.offNoseT = 0;
       // loot: an uncontested part UPGRADE in range beats farming
       const drop = this.findLootTarget(game);
       if (drop) {
+        this.lastFocus = drop;
         const dd = dist(this.x, this.y, drop.x, drop.y);
         if (dd < 50) { // parked on the part — sit and channel the pickup
           ({ steer, throttle } = this.parkOn(drop.x, drop.y));
@@ -246,23 +450,30 @@ class ArenaBot extends Car {
           if (this.lootChannel >= BOT_LOOT_CHANNEL) game.botEquip(this, drop);
         } else {
           this.lootChannel = 0; // channel only accrues while parked on the part
-          ({ steer, throttle } = this.navTo(drop.x, drop.y, dd));
+          ({ steer, throttle, hb } = this.navTo(drop.x, drop.y, dd));
+          if (dd > 300) steer = clamp(steer + weave * 0.7, -1, 1); // vary the route, not the parking
         }
       } else {
         this.lootChannel = 0;
         // farm: navigate to the nearest scrap pile, then PARK on it to drain
         // (don't drive through — that's the sudden-stop-then-bolt behavior)
         let best = null, bd = 1e9;
-        for (const s of game.scrap) { if (s.dead) continue; const sd = dist(this.x, this.y, s.x, s.y); if (sd < bd) { bd = sd; best = s; } }
+        for (const s of game.scrap) { if (s.dead || s === this.boredOf) continue; const sd = dist(this.x, this.y, s.x, s.y); if (sd < bd) { bd = sd; best = s; } }
         if (best) {
+          this.lastFocus = best;
           if (bd < 44) ({ steer, throttle } = this.parkOn(best.x, best.y));
-          else ({ steer, throttle } = this.navTo(best.x, best.y, bd));
-        } else throttle = 0.5;
+          else {
+            ({ steer, throttle, hb } = this.navTo(best.x, best.y, bd));
+            if (bd > 300) steer = clamp(steer + weave * 0.7, -1, 1); // different lines to the same pile
+          }
+        } else { this.lastFocus = null; throttle = 0.5; steer = weave; } // idle cruise wanders apart too
       }
     }
 
-    // ram boost (before integrate); other weapons fire after
-    if (this.weapon === "ram") this.updateRam(dt, engaged, aim);
+    // ram boost (before integrate); other weapons fire after. The charge arms
+    // off the INTERCEPT aim — nose on the predicted position = launch. No
+    // wind-ups while walking away from a given-up loop.
+    if (this.weapon === "ram") this.updateRam(dt, engaged && !escaping, ramAim);
     else this.boost = 1;
 
     // --- wall handling (all behaviors) ---
@@ -273,29 +484,32 @@ class ArenaBot extends Car {
     // near a wall, so mid-arena parking/orbiting never triggers a phantom back-out.
     if (this.speed < 40 && this.nearWall() && !ramLaunching) this.stuckT += dt;
     else this.stuckT = Math.max(0, this.stuckT - dt * 2);
-    if (this.stuckT > 0.7) {
+    if (this.stuckT > this.persona.unstickDelay) { // personal delay — escapes desync
       const toIn = angleDiff(Math.atan2(ARENA.h / 2 - this.y, ARENA.w / 2 - this.x), this.heading);
       throttle = -0.6;
       steer = -clamp(toIn * 2, -1, 1); // reversing flips steering → nose swings toward the interior
-      if (this.stuckT > 2.4) this.stuckT = 0; // periodically release + retry the behavior
+      hb = false;                      // no handbrake while backing out
+      if (this.stuckT > this.persona.unstickDelay + 1.7) this.stuckT = 0; // release + retry
     }
 
-    this.integrate(dt, throttle, steer, false);
+    this.integrate(dt, throttle, steer, hb);
 
     // world bounds
     const m = ARENA.wall + this.radius;
     this.x = clamp(this.x, m, ARENA.w - m);
     this.y = clamp(this.y, m, ARENA.h - m);
 
+    trackArenaMotion(this, dt); // feed the shot-leading trackers (I'm a target too)
+
     // ranged weapons fire toward the current target (RELOAD shortens the interval)
     this.fireTimer -= dt;
     if (wantFire && target && this.fireTimer <= 0 && this.weapon !== "ram") {
-      // lead moving targets by their velocity over the shell's flight time.
-      // Partial lead (0.5): orbiting targets CURVE, so full linear lead
-      // overshoots the arc — under-leading lands more of the time.
-      const lt = (dist(this.x, this.y, target.x, target.y) / 460) * 0.5;
-      const ax = target.x + (target.vx || 0) * lt, ay = target.y + (target.vy || 0) * lt;
-      const ang = Math.atan2(ay - this.y, ax - this.x);
+      // acceleration-aware lead (arenaAimPoint — the Gauntlet gunner's model):
+      // distance sets flight time, along-track accel + typical-speed regression
+      // set the travel. persona.lead scales it (under/over-leaders) and every
+      // shot carries the personal aim scatter.
+      const ap = arenaAimPoint(this, target, 460, this.persona.lead);
+      const ang = Math.atan2(ap.y - this.y, ap.x - this.x) + rand(-this.persona.aimErr, this.persona.aimErr);
       if (this.weapon === "cannon") {
         this.fireTimer = 0.7 / this.reloadMul();
         const b = new Bullet(this.x + Math.cos(ang) * 24, this.y + Math.sin(ang) * 24, ang, 460, false, (10 + this.level) * this.weaponMul());
@@ -323,7 +537,7 @@ class ArenaBot extends Car {
   findLootTarget(game) {
     let best = null, bd = 1e9;
     for (const d of game.drops) {
-      if (d.dead) continue;
+      if (d.dead || d === this.boredOf) continue; // skip drops I gave up on
       const dd = dist(this.x, this.y, d.x, d.y);
       if (dd > BOT_LOOT_RANGE || dd >= bd) continue;
       if (!this.wouldUpgrade(d.part)) continue;
@@ -354,6 +568,8 @@ class ArenaBot extends Car {
     // remember the attacker (hurtCar sets lastHitBy just before calling us) —
     // retaliation: they jump the targeting queue for a few seconds
     if (this.lastHitBy && this.lastHitBy !== this) { this.grudge = this.lastHitBy; this.grudgeT = RETALIATE_T; }
+    this.escapeT = 0; // survival beats boredom — being hit cancels a walk-away
+    if (this.boredOf === this.lastHitBy) { this.boredOf = null; this.boredT = 0; } // ...and un-blacklists an attacker
     if (this.hp <= 0) this.deadFlag = true;
   }
 }

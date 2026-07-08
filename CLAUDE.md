@@ -483,6 +483,188 @@ cascade bug that text-only testing never would.
   base kill) + full regression + desktop & mobile screenshots green. NOT yet:
   bots hunting the bounty (they don't read the board); global cross-session
   board (waits on accounts).
+- **2026-07-07** — Arena RAM handbrake NOSE-CUT (user: rams should handbrake
+  to whip their front onto enemies "more often but not necessarily all the
+  time"). In the ram combat branch: when badly off the intercept aim
+  (>0.6 rad), moving (speed>90), and in range (td<500), the bot rolls against
+  `persona.ramSnapChance` (0.45-0.8, per-spawn) — success opens a 0.25-0.45s
+  handbrake window (`ramSnapT`, grip craters → the steer whips the nose onto
+  the target), decline just starts a 0.8-1.6s re-roll cooldown (`ramSnapCd`),
+  so the same situation sometimes snaps and sometimes muscles through.
+  NEVER mid-launch (`ramBoostT>0` — charges stay committed). All rolls
+  seeded-deterministic. Gated by arena-level-test.js (chance=1 snaps,
+  chance=0 declines + cools down, launch-safe, persona band) — 5/5 stability
+  runs + full regression green.
+- **2026-07-07** — Arena PILE-ORBIT fix v2: speed-aware arrival + handbrake
+  nose-snap (user: bots still circled scrap piles). ROOT CAUSE of the residual
+  orbiting: `navTo`'s brake-to-turn only reduced THROTTLE, but in this drift
+  model weak drag means cutting throttle doesn't shed existing momentum — a
+  bot arriving at ~300px/s blew through the 44px capture window and lapped on
+  momentum (give-up rescued it only after 16-24s). FIX 1 (speed-aware
+  arrival): `navTo` now carries a distance-based speed BUDGET
+  (`clamp(d*2.2, 70, maxSpeed)`) and applies REAL braking (throttle -0.55)
+  whenever actual speed exceeds it — enforced physics, not hoped-for. FIX 2
+  (user spec): a handbrake NOSE-SNAP — within 140px, more than 0.5 rad off,
+  and moving (>60) → handbrake craters the grip so the steering whips the
+  nose to FACE the item directly. `navTo` now returns `{steer, throttle, hb}`
+  and `ArenaBot.update` plumbs `hb` into integrate (cleared during the
+  wall reverse-out); all `navTo` users (loot approach, farm, escape runs)
+  inherit both fixes. Gated by arena-level-test.js (over-budget → negative
+  throttle, under-budget → none; close+off-angle+moving → hb, far → no hb;
+  the moth-orbit reach + park-linger tests still pass) — 5/5 stability runs +
+  full regression green.
+- **2026-07-07** — Arena SPECTATE stability fix (user: the view randomly
+  swapped bots). ROOT CAUSE: `spectateTarget()` indexed into the FILTERED
+  living-bots array (`live[spectateIdx % live.length]`) — any bot dying or
+  respawning anywhere reshuffled the array, so the same index silently
+  pointed at a different car. FIX: the camera now tracks `spectateCar` by
+  REFERENCE — it only moves when THAT car dies (hands off to a living bot;
+  Titan fallback) or the NEXT button cycles (`nextSpectate` walks the living
+  list relative to the current car). `spectateIdx` removed. Gated by
+  arena-level-test.js (another bot dying + a respawn arriving do NOT move the
+  view; the watched car's own death does) + full regression green.
+- **2026-07-07** — Arena bot PLAYER TEMPERAMENT (user spec): the global
+  player-priority (PLAYER_BIAS 0.65 = ~35% boost) is now a per-bot SPAWN roll —
+  `persona.playerBias = rand(0.45, 0.85)`, i.e. 35% ± 20 points, uniform (user
+  confirm): 0.45 = 55% priority (player-hunter) … 0.85 = 15% (mostly ignores
+  you unless provoked). Rolled once per spawn/respawn, used in `pickTarget`'s
+  player scoring; engagement ranges (560/450), grudge/retaliation, and
+  bot-vs-bot scoring untouched — a passive bot still comes for you if you
+  shoot it. PLAYER_BIAS constant removed. Gated by arena-level-test.js
+  (band check; same geometry picks the player at 0.45 but the closer bot at
+  0.85; exact-math asserts pin 0.65) — 5/5 stability runs + full regression.
+- **2026-07-07** — Arena SHOT LEADING: full Gauntlet-gunner port (user picks:
+  full model + weaker Titan lead; closes the "smarter shot leading" backlog
+  item). `trackArenaMotion(car, dt)` (arena-bot.js) runs on EVERY arena car
+  each step — player (after wall clamp in arena.js), bots (end of
+  ArenaBot.update), the Titan (after its crawl) — maintaining the Gauntlet
+  Player's two trackers: smoothed accel (0.15s EMA, collision-spike-proof) +
+  typical speed (1.5s EMA). `arenaAimPoint(shooter, target, bulletSpeed,
+  leadMul)` is the ported predictor: ALONG-TRACK accel only (bounded by
+  0..maxSpeed; a hard brake predicts the shot landing where the slide dies),
+  perpendicular/turning accel IGNORED (the Gauntlet measured naive ½at² at
+  12% vs 39% hits — documented, don't re-attempt), trend trusted tau=0.5s
+  then regressed 50% toward typical speed, flight time refined once. Bot
+  cannons use it with `persona.lead` RE-BANDED 0.8-1.1 around the smart
+  prediction (was 0.35-0.65 around naive linear); aim scatter unchanged. The
+  TITAN's heavy shell also leads now, at 0.5 (user pick: threatening vs
+  straight-liners, dodgeable by turning; it previously fired at your current
+  position — trivially outdriven). Gated by arena-level-test.js (tracker
+  convergence, near-linear lead for constant-velocity targets, brake-
+  shortened lead, a real bot shot + Titan shell both angled AHEAD of a
+  crossing mover) — 6/6 stability runs + full regression green.
+- **2026-07-07** — Arena DUEL RESOLUTION (user: the duel-test flake exposed a
+  real gameplay issue — two ranged bots can orbit at range forever, bullets
+  clashing/missing, and the give-up factor then made BOTH walk away: fights
+  evaporated instead of resolving). Three mechanisms (user pick: A+C+D), all
+  persona-jittered per the standing randomness rule: (A) ESCALATION — a duel
+  clock (`fightT`, reset on target change) starts tightening the orbit ring
+  after `persona.escalateT` (6-10s) at `persona.escalateRate` (5-10%/s, floor
+  35%): fights spiral inward, hit rates climb, someone wins. (C) STANDOFF
+  DIVE — `noDmgT` counts engaged time since the bot last DEALT damage
+  (`hurtCar` zeroes `source.noDmgT` — any bullet/mine/collision counts); past
+  `persona.dashAfter` (5-8s) the bot commits to a 1-1.5s straight dive at the
+  target, guns free. (D) COMBAT-AWARE GIVE-UP — the area-anchor give-up now
+  checks: if the stuck focus IS the combat target, it escalates (forces the
+  tight-orbit phase + an immediate dive) instead of blacklist+flee; walk-away
+  remains for non-combat focuses only. So "both bots run away from each
+  other" can no longer be a mutual combat outcome. Duel-test personas pin the
+  new fields too (asymmetric). Gated by arena-level-test.js (escalated duel
+  closes <230px; no-damage triggers a dive; hurtCar resets the clock; combat
+  give-up escalates, never flees) — 6/6 stability runs + full regression.
+  TWEAK (user): the dive interval is no longer a fixed persona roll —
+  `nextDashAt` re-rolls INDEPENDENTLY per dive from `rand(4, 10)`, so bots
+  never settle into a predictable dive rhythm (persona.dashAfter removed).
+- **2026-07-07** — Arena bot GIVE-UP factor (user request: bots stuck doing
+  the same thing / in a small area >20s must change plans). DETECTION (user
+  pick: area anchor): each bot keeps an anchor point — moving >400px re-anchors
+  and resets the timer; staying inside the bubble past `persona.giveUpT`
+  (16-24s roll, per the standing randomness rule) triggers the give-up. One
+  bubble catches EVERY loop shape (circling fights, wall dances, pickup
+  oscillation) with no per-behavior bookkeeping. RESPONSE (user pick:
+  blacklist + walk away): the bot's `lastFocus` (current combat target / loot
+  drop / scrap pile, tracked per behavior branch) goes on a 10s `boredOf`
+  blacklist — filtered out of `pickTarget`, `findLootTarget`, and farm pile
+  selection — and the bot commits to a seeded far point (700-1100px, clamped
+  in-world) for 4-6s (`escapeT`), no firing/ram wind-ups mid-escape, wall
+  avoidance still active. SURVIVAL BEATS BOREDOM: `hurt()` cancels the escape
+  AND un-blacklists an attacker (so a blacklisted rival that opens fire gets
+  retaliated against). Gated by arena-level-test.js (bubble re-anchor, trigger
+  past patience, focus blacklisted + far escape point, blacklist filters
+  loot + combat targeting, hit cancels + un-blacklists) — plus the cannon-duel
+  test's personas are now pinned ASYMMETRICALLY (identical twins clash-cancel
+  all mutual bullets; the test verifies the mechanism, not persona dice) —
+  6/6 stable runs + full regression green.
+- **2026-07-07** — Arena bot COMBAT-RANDOMNESS pass (user audit + picks; the
+  standing rule: bots get slight seeded randomness in most behaviors so
+  identical states never mirror into loops). Six new `persona` rolls, all
+  wired into formerly-shared constants: `aimErr` 0.02-0.05 rad (per-SHOT
+  scatter via sim `rand()` added to the cannon angle — marksmen vs sprayers),
+  `lead` 0.35-0.65 (replaces the flat 0.5 bullet-lead factor), `fireArc`
+  1.7-2.3 (replaces the flat 2.0 will-shoot cone), `sticky` 0.75-0.95
+  (replaces STICKY_MUL 0.85 target loyalty — duelists vs opportunists;
+  engagement ranges 450/560 untouched), `flipCdT` 0.8-1.4s (wall U-turn
+  cooldown), `unstickDelay` 0.5-1.1s (how long pinned on a wall before the
+  reverse-out; release window rides on it). Declined by user (not added):
+  fire-cadence jitter, ram charge/launch jitter, boss-courage range. Gated by
+  arena-level-test.js (persona fields exist + stay in tuning bands) + all AI
+  tests (ram/cannon duels, wall fights, converge, parking) stable across 3
+  random-seed runs + full regression green.
+- **2026-07-07** — Arena RAM-vs-RAM circling fix: intercept lead +
+  personality-desynced brake-to-turn (user report: two ram bots loop circling
+  each other). ROOT CAUSE: rams steered at the target's CURRENT position;
+  two moving rams each stay ~90° off the other's nose so the charge gate
+  (|aim|<0.4) never arms — endless mutual orbit (the ranged bots were cured
+  via ring-orbit but rams kept straight-chase steering). FIX: rams now steer
+  at an INTERCEPT point (`target.pos + target.v × time-to-reach ×
+  persona.ramLead`), which geometrically collapses mutual circles into
+  head-ons; plus the Gauntlet rammer's BRAKE-TO-TURN — off-nose (>0.6 rad)
+  for longer than `persona.ramPatience` seconds → throttle 0.25 so the nose
+  can swing on. BOTH knobs are per-bot persona rolls (ramLead 0.55-0.95,
+  ramPatience 0.7-1.3s) + weave on ram steering, per the user's standing
+  rule: bots get slight seeded randomness in most behaviors so identical
+  states never mirror into loops. The charge now arms off the INTERCEPT aim
+  (`updateRam(dt, engaged, ramAim)`), so launches fire when lined up with
+  where the target WILL be. Gated by arena-level-test.js (ram-vs-ram from
+  the classic circling setup: contact + damage within 12s, stable across
+  3 random-seed runs) + full regression green.
+- **2026-07-07** — Arena WALL-FIGHT fix: ring-point orbit + N/E/S/W U-turn
+  (user: two bots dueling near a map edge hugged the wall in a line shooting
+  at each other). ROOT CAUSE: circle-strafe steered along a tangent DIRECTION;
+  near a wall the look-ahead avoidance cancelled the inward component, leaving
+  both cars motion parallel to the wall — nothing ever pulled a fight back to
+  open ground. FIX 1 (user pick: "flatten to safe line", option A): ranged
+  combat now steers toward a RING-POINT GOAL (Gauntlet circler pattern) — an
+  actual world point on a ring of `persona.orbitRange + target.radius` around
+  the enemy, a personal step (`0.55 + orbitBias` rad) ahead of the bot's ring
+  angle, CLAMPED into `[ARENA.wall+110, ARENA.w/h - …]` — so near a wall the
+  goal itself flattens onto the safe line and bends the fight inward (ring
+  geometry also self-corrects range, replacing the old rangeErr/orbitAng
+  math; BOT_ORBIT_ANGLE removed). FIX 2 (U-turn safety net, user spec: must
+  be wall-identity-based N/E/S/W + resize-safe): identify the near wall by
+  comparing x/y against `ARENA.wall+130` bands (all from ARENA dims — map
+  resizes keep working), take its inward normal, and if the bot's ring-tangent
+  travel direction dots against it (< -0.3) flip `orbitDir`, with a 1s
+  `flipCd` cooldown so it can't oscillate. Covers the enemy-pinned-flat case
+  where clamped goals degenerate. Gated by arena-level-test.js (U-turn
+  geometry: west-wall + enemy-due-north flips orbitDir + sets cooldown + no
+  second flip during cooldown; migration: a grudge-locked wall duel reaches
+  >320px off the wall within 8s) + all prior AI tests + full regression green.
+- **2026-07-07** — Arena bot PERSONALITY (AI-randomness layer 1 of the
+  "conga line / predictability" backlog item; user picked minimal-first). Each
+  `ArenaBot` rolls a seeded `persona` at spawn (sim RNG → deterministic per
+  seed): `orbitRange` (±60-70 around BOT_ORBIT_RANGE), `orbitBias` (±0.25 on
+  the circle-strafe angle), `throttleMul` (0.86-1.0 combat drive), and
+  `weavePhase/Freq/Amp` — a SIM-CLOCK sine steering wobble applied to combat
+  steer, long drives (>300px to a target), and idle cruising, but OFF near
+  pickups so parking/brake-to-turn stays exact. `orbitDir` is now a seeded
+  roll instead of id-parity. Two bots in the same state no longer compute
+  identical paths (mirror-lock standstills, conga lines). Deliberately NOT
+  touched: engagement ranges (450/560 exact — targeting-test boundaries),
+  no juke timers/dashes yet (layers b-d still backlogged). Gated by
+  arena-level-test.js (personas exist + differ across bots + same seed rolls
+  identical personas) + all prior AI tests (duel/nav/wall/parking/converge/
+  looting) + full regression green.
 - **2026-07-07** — Arena bot WALL AVOIDANCE + item-parking (user: bots wedge on
   side walls during fights; and stop-then-bolt on scrap/loot instead of
   lingering). WALLS: ported the Gauntlet's look-ahead avoidance to `ArenaBot` —

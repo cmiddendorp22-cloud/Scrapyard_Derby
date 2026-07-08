@@ -89,7 +89,7 @@ class ArenaGame {
     this.dead = false;                // player wrecked → death menu
     this.respawnT = 0;                // brief wreck moment before the menu shows
     this.spectate = false;            // watching bots from the death menu
-    this.spectateIdx = 0;             // which living bot the camera follows
+    this.spectateCar = null;          // the exact car the camera follows (by reference)
     this.kills = 0;
     this.pairHits = new Map();        // car-pair collision-damage cooldown
     this._t = 0;                      // sim clock (collision cooldown keys)
@@ -360,6 +360,7 @@ class ArenaGame {
 
   // route damage to the right HP pool + record the attacker for attribution
   hurtCar(car, amount, source) {
+    if (source && source.noDmgT !== undefined) source.noDmgT = 0; // attacker IS landing damage
     if (car === this.player) { this.playerLastHitBy = source; this.damagePlayer(amount); }
     else { car.lastHitBy = source; car.hurt(amount); }
   }
@@ -660,13 +661,22 @@ class ArenaGame {
   // (you keep ~63% of your level) and re-earn from there. Your build resets —
   // stats to zero (with the reduced level's points to re-spend) + a fresh
   // common loadout of your original weapon.
-  // the bot the spectate camera follows (wraps; falls back to the Titan)
+  // the car the spectate camera follows — tracked by REFERENCE, so deaths of
+  // OTHER bots never move the view; only the watched car's own death (or the
+  // NEXT button) swaps to another living bot. Falls back to the Titan.
   spectateTarget() {
+    if (this.spectateCar && !this.spectateCar.deadFlag && this.bots.includes(this.spectateCar)) {
+      return this.spectateCar;
+    }
     const live = this.bots.filter((b) => !b.deadFlag);
-    if (!live.length) return this.boss && !this.boss.dead ? this.boss : null;
-    return live[this.spectateIdx % live.length];
+    this.spectateCar = live.length ? live[0] : null;
+    return this.spectateCar || (this.boss && !this.boss.dead ? this.boss : null);
   }
-  nextSpectate() { this.spectateIdx++; }
+  nextSpectate() {
+    const live = this.bots.filter((b) => !b.deadFlag);
+    if (!live.length) return;
+    this.spectateCar = live[(live.indexOf(this.spectateCar) + 1) % live.length];
+  }
 
   respawnPlayer() {
     this.dead = false;
@@ -886,6 +896,7 @@ class ArenaGame {
     if (p.x > ARENA.w - m)  { p.x = ARENA.w - m;  if (p.vx > 0) p.vx *= -0.4; }
     if (p.y < m)            { p.y = m;            if (p.vy < 0) p.vy *= -0.4; }
     if (p.y > ARENA.h - m)  { p.y = ARENA.h - m;  if (p.vy > 0) p.vy *= -0.4; }
+    trackArenaMotion(p, dt); // bots lead their shots off these trackers
 
     // weapon fire, then combat: bots think, Titan crawls, cars collide, shots resolve
     this.updateWeapon(dt);

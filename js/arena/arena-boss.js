@@ -90,12 +90,16 @@ class ArenaBoss {
       const mm = ARENA.wall + this.radius;
       this.x = clamp(this.x, mm, ARENA.w - mm);
       this.y = clamp(this.y, mm, ARENA.h - mm);
+      trackArenaMotion(this, dt); // bots lead their shots at the Titan too
 
-      // cannon: a heavy, slow shell — only while the FRONT plate survives
+      // cannon: a heavy, slow shell — only while the FRONT plate survives.
+      // WEAKER lead (0.5, user pick): threatening vs a straight-line driver,
+      // still dodgeable by turning.
       this.fireTimer -= dt;
       if (target && bd < 820 && this.fireTimer <= 0 && !this.plates[0].dead) {
         this.fireTimer = 2.4;
-        const ang = Math.atan2(target.y - this.y, target.x - this.x);
+        const bap = arenaAimPoint(this, target, 300, 0.5);
+        const ang = Math.atan2(bap.y - this.y, bap.x - this.x);
         const b = new Bullet(this.x + Math.cos(ang) * this.radius, this.y + Math.sin(ang) * this.radius, ang, 300, false, 26);
         b.life = 3.0; b.shooter = this; b.radius = 9;   // big, slow, hard hit
         b.strength = 3; // heavy shell — eats 3 normal bullets before breaking

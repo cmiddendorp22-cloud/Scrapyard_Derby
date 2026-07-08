@@ -161,7 +161,7 @@
   // -- Arena death menu + spectate: on wreck, pick RESPAWN / SPECTATE / MAIN
   // MENU (no auto-respawn). Spectate follows living bots; NEXT (or N) cycles.
   document.getElementById("death-respawn-btn").addEventListener("click", () => { if (active === arena && arena.dead) arena.respawnPlayer(); });
-  document.getElementById("death-spectate-btn").addEventListener("click", () => { if (active === arena && arena.dead) { arena.spectate = true; arena.spectateIdx = 0; } });
+  document.getElementById("death-spectate-btn").addEventListener("click", () => { if (active === arena && arena.dead) { arena.spectate = true; arena.spectateCar = null; } });
   document.getElementById("death-mainmenu-btn").addEventListener("click", quitToMenu);
   document.getElementById("spectate-next-btn").addEventListener("click", () => { if (active === arena) arena.nextSpectate(); });
   document.getElementById("spectate-respawn-btn").addEventListener("click", () => { if (active === arena && arena.dead) arena.respawnPlayer(); });
