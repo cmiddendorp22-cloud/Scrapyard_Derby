@@ -20,7 +20,7 @@ const ARENA_TIERS = [
 const TIER_MAX = ARENA_TIERS.length - 1; // 4 = legendary
 
 const PART_SLOTS = ["tires", "engine", "weapon", "armor"];
-const ARENA_WEAPON_TYPES = ["cannon", "minelayer", "ram"];
+const ARENA_WEAPON_TYPES = ["cannon", "minelayer", "ram", "shotgun"];
 
 // build a part { slot, type, tier, cd }. `cd` is a per-weapon fire timer.
 function makePart(slot, type, tier) {

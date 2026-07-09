@@ -483,6 +483,287 @@ cascade bug that text-only testing never would.
   base kill) + full regression + desktop & mobile screenshots green. NOT yet:
   bots hunting the bounty (they don't read the board); global cross-session
   board (waits on accounts).
+- **2026-07-09** — Hook speed + reach are now FLAT at every tier (user): dropped
+  the per-tier `HOOK_SPEED_MIN/MAX` for a single `HOOK_SPEED` 1270 (the old
+  uncommon value); `HOOK_MAX_LEN` 375 for all tiers. Only mine/hook DAMAGE still
+  varies by tier (`mineTierMul` 0.75→1.5). (`hookSpeedOf` now returns the flat
+  value.)
+- **2026-07-09** — Mine damage +50% (user): `MINE_BASE` 90 → 135, bot mine
+  `24+2·lvl` → `36+3·lvl`. Since `mineDamageOf` is the single source, the hook
+  detonation (1 mine to a car, 3× to a boss) scaled up with it automatically.
+- **2026-07-09** — Death XP penalty harsher (user): respawn keeps 10% of your
+  total XP (was 25%) — `respawnPlayer`'s `kept` 0.25 → 0.10. Kill reward (25% of
+  a victim's XP) unchanged.
+- **2026-07-09** — Fix: spawn at FULL HP. `begin()` ran `applyStats` (which sets
+  maxHp 120 from the starting common armor) but never set `hp = maxHp`, so you
+  started at 100/120 (83%). Added `this.hp = this.maxHp` in `begin()`. Gated by
+  arena-level-test.js.
+- **2026-07-09** — Spending HEALTH keeps your HP PERCENTAGE (user): `spendStat`
+  captures `hp/maxHp` before `applyStats`, then sets `hp = frac * maxHp` — so a
+  +25-max-HP upgrade at 70% leaves you at 70% of the new max (full stays full;
+  non-health stats leave current HP untouched since they don't change maxHp).
+  Gated by arena-level-test.js.
+- **2026-07-09** — STAT-HOVER TOOLTIPS (permanent) + hook tuning. TOOLTIPS: the
+  Arena SPEND-POINTS stat buttons now show a `#stat-tooltip` on hover with what
+  the NEXT point does, current→next (HEALTH +25 max HP, SPEED +5% speed/accel,
+  RELOAD +8% fire rate & the hook-cooldown drop, REGEN +0.5%/s) — `statEffectText`
+  in main.js reads the live values. HOOK faster overall (`HOOK_SPEED_MIN/MAX`
+  400/1000 → 750/1650). (Briefly tried carrying the car's velocity on the hook
+  head — reverted per user; the hook travels at its own speed only.)
+- **2026-07-09** — TEMPORARY TEST MODE (dev-only, user asked — DELETE LATER). A
+  "🛠 TEST MODE" button on the start screen launches Arena (cannon) with a
+  floating `#test-panel`: +1/+5/+10 LVL, HEAL, GODMODE toggle (`arena._godmode`,
+  gated in `damagePlayer`), KILL ME (full death→respawn flow), SPAWN BOT at a
+  typed level, spawn a full part set (every slot + all 4 weapon types) at any
+  TIER, SPAWN TITAN/MAGNET, OVERLOAD (the Magnet), WRECK BOTS (test loot). All
+  self-contained in clearly-commented blocks to remove when done: the
+  `#test-panel`/`#test-mode-btn` HTML, the TEST MODE CSS block, `initTestPanel`
+  (+ its call, the quitToMenu hide line, and the one `_godmode` line in
+  `damagePlayer`). Not covered by tests (throwaway).
+- **2026-07-09** — Weapon PRIMARY/SECONDARY input model (user Q&A, scalable) +
+  hook/mine tuning. INPUT MODEL: each weapon declares an ABILITY via
+  `ArenaGame.weaponAbility` (ram→CHARGE hold, minelayer→HOOK click, cannon/
+  shotgun→none); `resolvePlayerInputs()` maps raw signals (mouseDown/hookHeld/
+  autoFire/touchFire/touchAbility1-2) → `_fireActive` (spammables: cannon/
+  shotgun/mines) + `_primHeld` (left) + `_secHeld` (right) per the loadout.
+  SPAMMABLES fire on FIRE (left-click / auto-fire toggle / touch FIRE), both
+  slots together — EXCEPT a primary click-ability (minelayer hook) claims
+  left-click, so spammables (its mines) go on the auto-fire toggle only.
+  ABILITIES bind by slot: PRIMARY → left-click, SECONDARY → right-click (a
+  hold-charge ram coexists with spammable fire on left; the hook claims left).
+  `updateRam`/`updatePlayerHook` fire off the ram/minelayer's SLOT channel;
+  `updateWeapon` gates on `_fireActive`. Bots unaffected (single weapon =
+  primary). TOUCH: the HOOK button became two ABILITY buttons (`#touch-ability1`
+  primary / `#touch-ability2` secondary), labelled HOOK/CHARGE + shown per
+  equipped ability by `updateAbilityButtons` in main.js. Start-screen hint +
+  input.js signals updated (removed `input.hook`/`touchHook`). MINE DAMAGE now
+  scales with the minelayer TIER (user): `mineTierMul` 0.75× (common) → 1.5×
+  (legendary) on `MINE_BASE` 90 (single source `mineDamageOf`; bots also ×level).
+  HOOK is SLOWER + tier-scaled (user, harder to land): extend speed 1600 →
+  `HOOK_SPEED_MIN` 400 (common, easy to dodge) … `HOOK_SPEED_MAX` 1000
+  (legendary; stored per-hook), reel time 0.5 → 1.2s. HOOK DETONATION now 1 mine to a car
+  (was 2), TRIPLE a mine to a boss. Bot hook-lead + player mines read the
+  tier-scaled values. Gated by arena-level-test.js (input-model: primary=left/
+  secondary=right, mines-on-auto-fire, touch buttons; mine 0.75/1.5×; hook
+  speed rises small with tier) + updated ram/minelayer/mine tests + touch
+  screenshots — 12/12 stability + full regression green.
+- **2026-07-09** — MINELAYER HOOK (signature feature, user Q&A). A grapple that
+  grabs the first car in its path and REELS it toward you (into your minefield).
+  Separate input from FIRE/autofire (user): desktop RIGHT-CLICK fires it
+  FULL-CIRCLE toward the cursor — no forward-cone clamp, unlike shots
+  (`mouseWorldAngle` split out from the cone-clamped `playerAimAngle`);
+  `input.hook` = right-mouse `hookHeld` (contextmenu suppressed);
+  touch gets a HOOK button (`#touch-hook`, auto-aims the nearest car in reach
+  since there's no cursor). `ArenaGame.hooks` = active grapples; `fireHook`
+  (one at a time per owner), `updatePlayerHook` (gated by `hasMinelayer()` +
+  `hookCd`), `updateHooks` extends the head at `HOOK_SPEED` 1600 to `HOOK_MAX_LEN`
+  750 (long leash), grabs the first car within `HOOK_HEAD_R`, chips `HOOK_DAMAGE`
+  15 on the grab (user: pulled + small damage), then reels it to the owner over
+  `HOOK_REEL_TIME` 0.5s. CONTACT DETONATION (user): when the reeled car reaches
+  the hooker's BODY it blows up (`hookImpact`) — launches the two apart + deals
+  TWO MINES of damage (`2 * mineDamageOf(owner)`, scales with the hooker's
+  minelayer) to the HOOKED car ONLY (not the hooker); srcType "mine" so it
+  bypasses ram frontal immunity. STUN (user): a hooked car is stunned
+  (`stunT`, can't shoot/mine/hook/ram-charge) while reeled AND `HOOK_STUN_AFTER`
+  0.5s after — gated in the player's updateWeapon/updatePlayerHook and the bot's
+  fire/hook/ram branches. BOSS HOOK (user): hooking a boss INVERTS the reel —
+  the boss is too big to pull, so it drags the HOOKER to IT (`reelingBoss` skips
+  `collideBoss` so only the boss takes the blast); chips on grab + detonates for
+  2 mines to the BOSS ONLY, bypassing the Magnet's armor (`hurtBoss(...,
+  bypass=true)` — hurts it even when not overloaded); boss never stunned/moved;
+  hooker flung out, takes no damage. Bots hook bosses too (boss-exclusion
+  dropped from their gate). MINE DAMAGE doubled + single-sourced (user): both
+  the dropped mines AND the hook blast now read `mineDamageOf` (player 60·tier,
+  bots 2× base) — change it in one place and both update; the blast stays
+  `2 * mineDamageOf`. Bots now LEAD their hooks (`arenaAimPoint(this, target,
+  HOOK_SPEED, persona.lead)` — the same predictor as their shots, with the
+  hook's travel speed) so they land on crossing targets instead of firing at the
+  target's current spot. Cooldown between hooks scales with RELOAD —
+  `hookCooldown` drops it linearly from `HOOK_CD` 6s (reload 0) to `HOOK_CD_MIN`
+  4s (max reload), set at fire (miss included);
+  misses die at max reach / a wall. BOTS too (user): minelayer bots fire a hook
+  at an in-range car (not a boss) to drag you into their field (`hookCd`
+  staggered per spawn). Renderer `drawHook` draws a dashed chain + head, yellow
+  for yours / red for others (matches bullets/mines); runs in the alive AND dead
+  (spectate) branches. Touch button added to the FIRE/DRIFT row (HOOK·DRIFT·FIRE,
+  screenshot-verified). Preview `?mode=arena&hook`. Gated by arena-level-test.js
+  (grab → reel-in → chip damage → spent; one-at-a-time; miss at range; a bot
+  hooks an in-range target) — 12/12 stability + full regression green. NOTE:
+  closes the long-standing "minelayer HOOK" backlog item; still open on the
+  weapon: bot mines-first-then-hook coordination, hooked-target counterplay.
+- **2026-07-09** — `F` is now an AUTO-FIRE TOGGLE (user), not hold-to-fire:
+  pressing F flips `Input.autoFire` (once per press — OS key-repeat ignored via
+  `e.repeat`), which keeps `input.fire` true until pressed again. Left-click +
+  the touch FIRE button remain hold-to-fire. Applies to both modes (shared
+  Input). Start-screen hint updated ("LEFT CLICK to fire · F toggles
+  auto-fire").
+- **2026-07-09** — Player MOUSE-AIM cone + narrowed bot fire cone + spectate
+  build readout (user). (1) MOUSE AIM: the player's shots no longer fire on a
+  single fixed line out the nose — on desktop they fire toward the CURSOR,
+  clamped to a small forward cone (`AIM_CONE` 0.6 rad ≈ ±34°), still originating
+  from the front of the car (`ArenaGame.playerAimAngle` maps client mouse →
+  logical viewport → world via the camera; cannon + shotgun both use it, recoil
+  follows the shot). Input now tracks `mouseX/mouseY` + `hasMouse`. On TOUCH /
+  before the mouse moves, shots go straight out the nose (mobile unchanged —
+  the one platform gap: no cursor aim on touch). (2) BOT FIRE CONE narrowed
+  (user, "might mess up how they shoot"): `persona.fireArc` 1.7-2.3 → 1.2-1.6
+  rad, so bots only fire when reasonably lined up instead of spraying sideways
+  (verified bots still land shots — duel/combat tests green). (3) SPECTATE
+  BUILD: while spectating a bot, the top-left HUD panel now shows THAT bot's
+  LVL + HP/XP bars + stat build (health/speed/reload — no regen row; bots have
+  no regen) in a reddish tint, and its unspent-points line if any (bots
+  auto-spend on level-up, so it's normally absent — the line still shows for
+  the player). `drawHud` sources its subject from `spectateTarget()` while
+  dead+spectating, else the player; the ram charge gauge is alive-player only.
+  Gated by arena-level-test.js (mouse dead-ahead → 0, 90°-off clamps to the
+  cone edge, within-cone partial aim, touch ignores the mouse, bot fireArc
+  band) + spectate screenshot.
+- **2026-07-09** — RAM frontal block now requires ACTIVELY RAMMING (user): the
+  front only shrugs damage while LAUNCHED + MOVING (`ramLaunchingFast` =
+  `ramBoostT > 0 && speed > RAM_BLOCK_SPEED` 60), NOT while winding up the
+  charge (dug in). Winding up (ramCharge>0, not launched) or a stalled launch
+  now takes normal 35%-off damage — you can shoot a ram that's revving up. The
+  `charging` arg to `ramDamageMul`, the player's mirrored `chargingRam` flag,
+  and `isChargingRam` (the head-on charge-vs-charge check) all switched from
+  `ramCharge>0 || ramBoostT>0` to `ramLaunchingFast`. Gated by arena-level-test.js
+  (winding-up + stalled-launch frontal bullet both take 35%, launched+moving
+  immune).
+- **2026-07-09** — Shotgun pellet clash strength set to 0.35 (user): pellets are
+  weak in the bullet-clash system, so a normal cannon bullet (strength 1) is
+  eaten crossing ~3 pellets before it breaks (sequential pairwise resolution:
+  breaks 2 outright, dies on the 3rd) — shotgun blasts can't out-trade a cannon
+  round at range. Player + bot pellets both set `b.strength = 0.35`. Gated by
+  arena-level-test.js (pellet strength + cannon-vs-3-pellets clash).
+- **2026-07-09** — Arena boss-movement + bot-vs-Magnet AI (user Q&A). MAGNET
+  MOVEMENT: the Magnet now HUNTS the nearest living car (slow relentless stalk,
+  `boss.prey`) instead of random-waypoint roaming — its pull field is a MOVING
+  threat you must keep fleeing (maxSpeed 55→60). JUNK TITAN movement unchanged
+  (slow crawl toward nearest — user kept it). MAGNET made HARDER (user: must be
+  tough, not easily outplayed): coreHp 1400→1800. BOTS vs MAGNET (new
+  `magnetTarget`/`magnetVuln` awareness in `ArenaBot.update`): (a) they HOLD AT
+  THE PULL'S EDGE — the circle-strafe ring is pinned to `MAGNET_PULL_R*~0.82`
+  (out of the crush) instead of the persona orbit range; (b) gun bots BAIT THE
+  OVERLOAD — cannon/shotgun hold fire vs the armored Magnet (shots just bounce)
+  and only open up during its overload window, while minelayers keep FEEDING
+  MINES into the pull anytime (mines are its weakness); (c) a RAM vs a
+  non-vulnerable Magnet doesn't charge into the crush — it falls through to the
+  ring-orbit (holds at the edge) and only commits its charge once the Magnet
+  overloads (`ramEngaged` gates `updateRam`). Gated by arena-level-test.js
+  (Magnet turns toward its nearest prey; a gun bot holds fire vs the armored
+  Magnet and opens up when it overloads) — 12/12 stability + full regression
+  green.
+- **2026-07-09** — Arena small-batch (user): (1) RAM FRONTAL CRASH refined —
+  while charging, a ram-primary now takes crash damage on the nose ONLY if the
+  OTHER car is ALSO a charging ram (head-on charge-vs-charge resolves duels);
+  plowing anything else, or a non-charging ram, does 0 frontal crash damage.
+  Frontal bullets still fully immune while charging; mines always hurt; 35% off
+  everything else. `ramDamageMul` now takes the attacking `source` +
+  `isChargingRam(car)` (uniform via a `chargingRam` flag mirrored onto the
+  player car in `updateRam`, read off `weapon`/charge state for bots);
+  `hurtCar`/`damagePlayer`/`ArenaBot.hurt` thread `source`. (2) RESPAWN WEAPON
+  RE-PICK — the death/spectate RESPAWN buttons now reopen the weapon-select
+  screen (`openRespawnWeaponSelect`, a `weaponRespawn` flag branches
+  `chooseWeapon`/`backToStart`); `respawnPlayer(weapon)` spawns with the chosen
+  weapon and makes it the new default `baseWeapon` (omitting keeps the last).
+  `updateDeathUI` is gated on `!weaponRespawn` so the death/spectate overlays
+  don't re-show on top of the picker while you're still `dead` (preview
+  `?mode=arena&respawnpick`).
+  (3) WALL-CLAMP fix — the roaming Magnet (unlike the stationary Titan) could
+  shove a wall-pinned car out of bounds via `collideBoss` (no re-clamp);
+  `updateCollisions` now re-clamps every living car to the world after all
+  pushes. Gated by arena-level-test.js (ram: frontal crash from a non-charging
+  foe = 0, from a charging ram = 35% off, rear/mine still hurt; respawn re-pick
+  equips + updates default) + arena-test hardened (neutralizes the boss/bots
+  for the pure movement/bounds check). NOTE: session permission-rule edits to
+  `.claude/settings.json` only take effect next session start.
+- **2026-07-08** — Arena backlog batch 4 (user Q&A: Magnet boss + field guide
+  built; roaming events + head-start meta skipped). (1) THE MAGNET — a SECOND
+  central boss (`ArenaMagnet` in arena-boss.js) that ALTERNATES with the Junk
+  Titan on respawn (`spawnCentralBoss` seed-picks; the Titan still leads). A
+  ROAMING gravity well: a constant inward pull (quadratic ramp within
+  `MAGNET_PULL_R` 640) you fight with throttle; it periodically freezes +
+  telegraphs a hard MEGA-PULL (`ArenaGame.magnetMegaPull` — yank + heavy
+  falloff damage) then OVERLOADS for ~2.6s, its ONLY vulnerable window (normal
+  weapons pling off otherwise — `hurtBoss` branches on `kind==="magnet"`, plays
+  a clank). It drags loose SCRAP toward the core (HEALS it) and MINES (bypass
+  the armor = its weakness, credited to the mine owner), and CRUSHES cars
+  mashed against it (`MAGNET_CRUSH_DPS`). Full boss generalization: `kind`/
+  `name`/`tagline`/`killXp` on both bosses; `nameOf`, `killBoss`, the
+  first-encounter banner (`_sawBossKinds` per-type), the minimap diamond
+  (purple vs gold), and `drawBossBar` (cyan "OVERLOADED" / "CHARGING!" states)
+  all read the boss kind. Renderer `drawMagnet` — red/blue magnet poles, a
+  faint pull-field ring + inward streaks, a collapsing mega-pull telegraph, a
+  bright-cyan core while overloaded. Preview `?mode=arena&magnet[&overload]`.
+  (2) ARENA FIELD GUIDE — a pause-screen reference (`#arena-guide-screen`,
+  `buildArenaGuide` in main.js) built from the live ARENA_WEAPONS/ARENA_TIERS
+  catalogs: WEAPONS (live portraits), PART SLOTS + 5 tier chips, STATS, and the
+  two bosses. Shown via a `#arena-guide-btn` that appears only in Arena (the
+  Gauntlet keeps its enemy guide); ESC/BACK → pause. Preview `?mode=arena&
+  guide`. Gated by arena-level-test.js (new Magnet section: pull, overload-only
+  vulnerability, mine-weakness + scrap-heal, mega-pull, kill/respawn, Titan/
+  Magnet alternation) + boot-test (guide button wiring) — 12/12 stability +
+  full regression + desktop & mobile screenshots (Magnet normal/overloaded,
+  guide) green.
+- **2026-07-08** — Arena backlog batch 3 (user Q&A: shotgun, ram defense,
+  tires→handbrake; player shot-spread skipped). (1) SHOTGUN weapon (one new
+  weapon end-to-end): a 6-pellet short-range cone (each pellet life 0.34s,
+  speed 620) — devastating point-blank, useless at range as pellets fan out +
+  die fast. Player fires the spread in `updateWeapon` (0.75s cd, heavy recoil);
+  bots fire it ONLY within 340px (`ArenaBot.update` shotgun branch, else hold
+  and close); twin stubby barrels in `drawWeaponGear`; added to
+  `ARENA_WEAPON_TYPES` (so it flows through loot/drops/equip automatically) +
+  the bot spawn weapon pool + the weapon-select screen (`ARENA_WEAPONS`).
+  (2) RAM FRONTAL DEFENSE (user-refined): ONLY when RAM is the PRIMARY (weapon1)
+  slot — a frontal BULLET while charging/ramming does 0 damage (bullets only,
+  ~138° front arc); everything else (rear bullets, ALL mines + crashes,
+  non-charging) is 35% off. Mines + crashes still hurt head-on so ram-vs-ram
+  duels resolve (user call — no frontal stalemates). Shared
+  `ramDamageMul(car, isPrimaryRam, charging, hitX, hitY, srcType)` in
+  arena-bot.js; `hurtCar`/`damagePlayer`/`ArenaBot.hurt` now thread a hit
+  position + srcType ("bullet"/"mine"/"crash"/"slam") from all 7 damage sites.
+  Player + bots (a bot's single `weapon==="ram"` is its primary). (3) TIRES
+  tier → sharper HANDBRAKE: both `applyStats` set `handbrakeBoost = 1.3 + 0.10*
+  (tier+1)` (base 1.3 → ~1.8 legendary), so better wheels whip the nose around
+  faster on a drift (player + bots). Gated by arena-level-test.js (new batch-3
+  section: shotgun spread + short-range bot gate, ram frontal-bullet immunity
+  vs crash/mine still hurting + secondary-grants-nothing, tires→handbrake) +
+  a robustness fix to the standoff-dive test (re-pin a clean engaged setup so
+  it's independent of the preceding spiral, since adding shotgun to the bot
+  pool shifts the sim RNG stream) — 20/20 stability + full regression + shotgun
+  screenshots (weapon-select card + in-game gear) green.
+- **2026-07-08** — Arena backlog batch 1 (user Q&A, 3 of 4 built; AI
+  chase-dodge dropped from backlog per user). (1) BOT MINE AVOIDANCE:
+  `ArenaBot.avoidMines` projects ~0.4s ahead and, for any HOSTILE mine near
+  that point (its OWN mines ignored), blends steering away — capped weight
+  (≤0.8) so combat lines stay readable; runs each step right after wall
+  avoidance, skipped mid ram-launch so charges stay committed. (2) DROPPED-PART
+  DESPAWN BLINK: `drawPartDrop` flickers a ground part's alpha in its final ~8s
+  (`remain < 8`), the blink frequency ramping ~6→~32 as `age → DROP_DESPAWN`,
+  so you can see a drop about to expire and race for it (cosmetic — render-clock
+  driven, no sim touch). (3) BIGGER NAME POOL + NO LIVE DUPES: `BOT_NAMES`
+  expanded ~20→~78; `ArenaGame.uniqueBotName` draws WITHOUT REPLACEMENT (a name
+  no living bot holds) so the leaderboard/killfeed never show duplicate handles
+  in a run (seeded pick → deterministic; the `ArenaBot` ctor takes an optional
+  `name`, `pick(BOT_NAMES)` fallback for direct test construction). Gated by
+  arena-level-test.js (hostile-mine dodge + own-mine ignored, unique names hold
+  across 28 spawns) — 5/5 stability + full regression (boot/arena/isolation/
+  determinism/smoke) green.
+- **2026-07-07** — Arena mine + spectate polish (user). (1) MINES DESPAWN:
+  every mine carries `age`; `updateMines` marks it dead past `MINE_LIFE` (20s)
+  so minefields don't linger forever (both player + bot mine pushes now seed
+  `age:0`). (2) OWN-MINE OWNER-SAFE: `detonateMine` skips `m.owner` in its
+  damage loop — shooting your own mine (3 hits) blows it up + catches nearby
+  enemies (credited to the shooter) but never hurts you; matches the
+  drive-over rule where a mine never triggers on its owner. (3) SPECTATE NEXT
+  DEBOUNCED: holding N (OS key-repeat) or spamming the button no longer blurs
+  through every bot — `trySpectateNext` in main.js gates `arena.nextSpectate`
+  to one swap per 150ms (wall-clock `performance.now`); `nextSpectate` itself
+  is unchanged so tests calling it directly are unaffected. Gated by
+  arena-level-test.js (owner-safe blast + still-hits-others, 20s despawn) +
+  fixed a class of test flakes the "any bot bullet harvests scrap" change
+  introduced — combat/FFA/killfeed/nemesis tests now clear `scrap` before
+  firing a bot/player bullet at a car so a random pile can't eat the shot
+  (10/10 stability) + full regression green.
 - **2026-07-07** — Arena slot/spectate/boss-UI mini-batch (user Q&A; skips →
   backlog). (1) WEAPON-2 OPEN FROM L1: the L10 unlock was cosmetic anyway
   (never enforced) — gate + banner removed, `SLOT_UNLOCKS` = armor@5 only,

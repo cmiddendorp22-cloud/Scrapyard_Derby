@@ -53,7 +53,79 @@
   // picking Arena opens the starting-weapon screen; choosing a weapon spawns you
   function startArena() {
     game.audio.unlock();
+    weaponRespawn = false; // fresh run, not a respawn re-pick
     document.getElementById("start-screen").classList.add("hidden");
+    buildWeaponSelect();
+    document.getElementById("weapon-select").classList.remove("hidden");
+  }
+
+  // ===========================================================================
+  // TEST MODE — dev-only sandbox. DELETE THIS FUNCTION + its call, the
+  // #test-panel/#test-mode-btn HTML, and the TEST MODE CSS block when done.
+  // ===========================================================================
+  function initTestPanel() {
+    const panel = document.getElementById("test-panel");
+    document.getElementById("test-mode-btn").addEventListener("click", () => {
+      game.audio.unlock();
+      weaponRespawn = false;
+      document.getElementById("start-screen").classList.add("hidden");
+      arena.startWeapon = "cannon";
+      active = arena;
+      arena.begin();
+      setGod(false);
+      panel.classList.remove("hidden");
+    });
+    const spawnSet = (tier) => { // a full ring of parts (every slot + weapon) at one tier
+      const p = arena.player, R = 95;
+      const kinds = [["tires", "tires"], ["engine", "engine"], ["armor", "armor"],
+        ["weapon", "cannon"], ["weapon", "shotgun"], ["weapon", "ram"], ["weapon", "minelayer"]];
+      kinds.forEach(([slot, type], i) => {
+        const ang = (i / kinds.length) * Math.PI * 2;
+        arena.dropPart(p.x + Math.cos(ang) * R, p.y + Math.sin(ang) * R, makePart(slot, type, tier));
+      });
+    };
+    const addLevels = (n) => { for (let i = 0; i < n && arena.level < 30; i++) arena.addXp(Math.max(1, arena.xpToNext() - arena.xp)); };
+    const setGod = (on) => {
+      arena._godmode = on;
+      const b = document.getElementById("test-god");
+      b.textContent = "GODMODE: " + (on ? "ON" : "OFF");
+      b.classList.toggle("on", on);
+    };
+    const spawnBotAt = (level) => { // a bot at a chosen level, dropped near the player
+      const p = arena.player, a = Math.random() * Math.PI * 2, W = ["cannon", "shotgun", "ram", "minelayer"];
+      const bot = new ArenaBot(p.x + Math.cos(a) * 350, p.y + Math.sin(a) * 350,
+        W[Math.floor(Math.random() * W.length)], Math.max(1, Math.min(30, level)), arena.uniqueBotName());
+      arena.bots.push(bot);
+    };
+    panel.addEventListener("click", (e) => {
+      const btn = e.target.closest("button"); if (!btn) return;
+      const cmd = btn.dataset.test;
+      if (cmd === "close") { panel.classList.add("hidden"); return; }
+      if (active !== arena || !arena.started) return;
+      if (cmd === "lvl1") addLevels(1);
+      else if (cmd === "lvl5") addLevels(5);
+      else if (cmd === "lvl10") addLevels(10);
+      else if (cmd === "heal") { arena.hp = arena.maxHp; arena.outOfCombat = 0; }
+      else if (/^t[0-4]$/.test(cmd)) spawnSet(parseInt(cmd.slice(1), 10));
+      else if (cmd === "god") setGod(!arena._godmode);
+      else if (cmd === "killme") { setGod(false); arena.damagePlayer(arena.maxHp * 2 + 1000); } // full death→respawn flow
+      else if (cmd === "spawnbot") spawnBotAt(parseInt(document.getElementById("test-bot-lvl").value, 10) || 10);
+      else if (cmd === "titan" || cmd === "magnet") {
+        arena.boss = arena.spawnCentralBoss(cmd); arena.bossRespawnT = 0;
+        arena.boss.x = arena.player.x; arena.boss.y = arena.player.y - 320;
+      } else if (cmd === "overload") { if (arena.boss && arena.boss.kind === "magnet") arena.boss.overload = 4; }
+      else if (cmd === "killbots") { for (const b of arena.bots) if (!b.deadFlag) { b.hp = 0; b.deadFlag = true; b.lastHitBy = arena.player; } }
+    });
+  }
+  // ===== end TEST MODE =====
+  // the weapon picker is reused for two flows: the INITIAL spawn (begin a run)
+  // and a RESPAWN re-pick (user request — choose your weapon again on death)
+  let weaponRespawn = false;
+  function openRespawnWeaponSelect() {
+    if (active !== arena || !arena.dead) return;
+    weaponRespawn = true;
+    document.getElementById("death-menu").classList.add("hidden");
+    document.getElementById("spectate-ui").classList.add("hidden");
     buildWeaponSelect();
     document.getElementById("weapon-select").classList.remove("hidden");
   }
@@ -81,12 +153,21 @@
   }
   function chooseWeapon(id) {
     document.getElementById("weapon-select").classList.add("hidden");
-    arena.startWeapon = id;
+    if (weaponRespawn) { // RESPAWN flow: re-spawn with the newly chosen weapon
+      weaponRespawn = false;
+      arena.respawnPlayer(id);
+      return;
+    }
+    arena.startWeapon = id; // INITIAL flow: begin a fresh run
     active = arena;
     arena.begin();
   }
   function backToStart() {
     document.getElementById("weapon-select").classList.add("hidden");
+    if (weaponRespawn) { // cancel a respawn re-pick → back to the death/spectate UI
+      weaponRespawn = false;
+      return; // updateDeathUI re-shows the death menu (or spectate) next frame
+    }
     document.getElementById("start-screen").classList.remove("hidden");
   }
   // options is mode-agnostic (just the volume slider on shared audio); handled
@@ -99,17 +180,75 @@
     document.getElementById("options-screen").classList.add("hidden");
     document.getElementById("pause-screen").classList.remove("hidden");
   }
+  // Arena FIELD GUIDE: a pause-screen reference for weapons, part slots/tiers,
+  // stats, and the two bosses. Content is built from the live data catalogs
+  // (ARENA_WEAPONS / ARENA_TIERS) so it can't drift from the game.
+  function buildArenaGuide() {
+    const grid = document.getElementById("arena-guide-grid");
+    grid.innerHTML = "";
+    const section = (title) => {
+      const h = document.createElement("div"); h.className = "ag-section"; h.textContent = title; grid.appendChild(h);
+    };
+    const row = (chip, name, desc) => {
+      const r = document.createElement("div"); r.className = "ag-row";
+      if (chip) r.appendChild(chip);
+      const t = document.createElement("div");
+      const n = document.createElement("div"); n.className = "ag-name"; n.textContent = name;
+      const d = document.createElement("div"); d.className = "ag-desc"; d.textContent = desc;
+      t.appendChild(n); t.appendChild(d); r.appendChild(t); grid.appendChild(r);
+    };
+    // WEAPONS — a live-rendered portrait per weapon (fire both slots at once)
+    section("WEAPONS");
+    for (const w of ARENA_WEAPONS) {
+      const cv = document.createElement("canvas");
+      cv.width = 60; cv.height = 44; cv.className = "guide-portrait";
+      arena.renderer.renderWeaponPortrait(w.id, cv);
+      row(cv, w.name, w.desc);
+    }
+    // PART SLOTS + TIERS
+    section("PART SLOTS");
+    row(null, "5 SLOTS", "Tires (grip / turn / handbrake), Engine (speed + accel), two Weapon slots (both fire together), Armor (max HP + damage reduction). Loot better parts off wrecks to fill and upgrade each slot.");
+    const tierWrap = document.createElement("div"); tierWrap.className = "ag-tiers";
+    for (const t of ARENA_TIERS) {
+      const c = document.createElement("span"); c.className = "ag-tier"; c.style.background = t.color; c.textContent = t.name;
+      tierWrap.appendChild(c);
+    }
+    grid.appendChild(tierWrap);
+    // STATS
+    section("STATS · spend level-up points");
+    row(null, "HEALTH", "Raises your maximum HP.");
+    row(null, "SPEED", "Faster top speed and acceleration.");
+    row(null, "RELOAD", "Shortens your weapon cooldowns.");
+    row(null, "REGEN", "Passively heal, but only after 5s without taking damage.");
+    // BOSSES
+    section("CENTRAL BOSSES · alternate on respawn");
+    row(null, "JUNK TITAN", "A huge stationary tank: 4 armor plates around a core. Tear off the plate facing you, then shoot the exposed core through the gap. Drops a rare+ part.");
+    row(null, "THE MAGNET", "A roaming gravity well — it drags you inward (fight it with throttle) and periodically MEGA-PULLS for heavy damage. Armored EXCEPT during the OVERLOAD window right after a mega-pull. Lure MINES into it (they bypass its armor); keep scrap away (scrap heals it).");
+  }
+  function openArenaGuide() {
+    buildArenaGuide();
+    document.getElementById("pause-screen").classList.add("hidden");
+    document.getElementById("arena-guide-screen").classList.remove("hidden");
+  }
+  function closeArenaGuide() {
+    document.getElementById("arena-guide-screen").classList.add("hidden");
+    document.getElementById("pause-screen").classList.remove("hidden");
+  }
   // MAIN MENU: quit the current run back to the mode-select start screen.
   // Works for both modes; resets the active controller so re-entry is fresh.
   function quitToMenu() {
-    for (const id of ["pause-screen", "guide-screen", "options-screen", "gameover-screen",
+    for (const id of ["pause-screen", "guide-screen", "arena-guide-screen", "options-screen", "gameover-screen",
                       "weapon-select", "intermission", "arena-stats", "arena-loadout",
                       "death-menu", "spectate-ui"]) {
       document.getElementById(id).classList.add("hidden");
     }
     document.getElementById("shop-toggle").classList.add("hidden");
     document.getElementById("loadout-toggle").classList.add("hidden");
-    loadoutOpen = false;
+    document.getElementById("touch-ability1").classList.add("hidden");
+    document.getElementById("touch-ability2").classList.add("hidden");
+    document.getElementById("test-panel").classList.add("hidden"); // TEST MODE (dev) — remove later
+    if (arena) arena._godmode = false;
+    loadoutOpen = false; abilitySig = ""; // refresh ability buttons on the next run
     if (active) {
       if (active.audio && active.audio.ctx) active.audio.ctx.resume(); // undo pause suspend
       if (active.audio && active.audio.engineOff) active.audio.engineOff();
@@ -125,6 +264,7 @@
   }
   document.getElementById("start-gauntlet-btn").addEventListener("click", startGauntlet);
   document.getElementById("start-arena-btn").addEventListener("click", startArena);
+  initTestPanel(); // TEST MODE (dev-only) — remove this call + initTestPanel later
   document.getElementById("weapon-back-btn").addEventListener("click", backToStart);
   document.getElementById("next-round-btn").addEventListener("click", nextRound);
   document.getElementById("restart-btn").addEventListener("click", () => game.restart());
@@ -133,6 +273,8 @@
   document.getElementById("resume-btn").addEventListener("click", () => active && active.togglePause());
   document.getElementById("guide-btn").addEventListener("click", () => { if (active === game) game.openGuide(); });
   document.getElementById("guide-back-btn").addEventListener("click", () => game.closeGuide());
+  document.getElementById("arena-guide-btn").addEventListener("click", () => { if (active === arena) openArenaGuide(); });
+  document.getElementById("arena-guide-back-btn").addEventListener("click", closeArenaGuide);
   document.getElementById("options-btn").addEventListener("click", openOptions);
   document.getElementById("options-back-btn").addEventListener("click", closeOptions);
   document.getElementById("main-menu-btn").addEventListener("click", quitToMenu);
@@ -140,14 +282,39 @@
   // Arena stat allocation: tappable buttons + desktop number keys 1-5.
   const STAT_LABELS = { health: "HEALTH", speed: "SPEED", reload: "RELOAD", regen: "REGEN" };
   const STAT_KEYS = { Digit1: "health", Digit2: "speed", Digit3: "reload", Digit4: "regen" };
+  // hover tooltip: what the NEXT point in a stat changes (current → next values)
+  const statTip = document.getElementById("stat-tooltip");
+  function statEffectText(stat) {
+    const lvl = arena.stats[stat];
+    if (lvl >= 10) return STAT_LABELS[stat] + " is MAXED (10)";
+    const to = lvl + 1;
+    if (stat === "health") return "HEALTH " + lvl + " → " + to + ":  +25 max HP  (" + Math.round(arena.maxHp) + " → " + Math.round(arena.maxHp + 25) + ")";
+    if (stat === "speed") return "SPEED " + lvl + " → " + to + ":  +5% top speed & accel  (+" + (lvl * 5) + "% → +" + (to * 5) + "%)";
+    if (stat === "reload") return "RELOAD " + lvl + " → " + to + ":  +8% fire rate  (+" + (lvl * 8) + "% → +" + (to * 8) + "%);  hook cooldown " + arena.hookCooldown(lvl).toFixed(1) + "s → " + arena.hookCooldown(to).toFixed(1) + "s";
+    if (stat === "regen") return "REGEN " + lvl + " → " + to + ":  heal " + (2 + lvl * 0.5).toFixed(1) + "%/s → " + (2 + to * 0.5).toFixed(1) + "%/s of max HP  (after 5s out of combat)";
+    return "";
+  }
   for (const s in STAT_LABELS) {
-    document.getElementById("stat-" + s).addEventListener("click", () => {
-      if (active === arena) { arena.spendStat(s); updateArenaStatsUI(); }
+    const btn = document.getElementById("stat-" + s);
+    btn.addEventListener("click", () => {
+      if (active === arena) { arena.spendStat(s); updateArenaStatsUI(); if (!statTip.classList.contains("hidden")) showStatTip(btn, s); }
     });
+    btn.addEventListener("mouseenter", () => showStatTip(btn, s));
+    btn.addEventListener("mouseleave", () => statTip.classList.add("hidden"));
+  }
+  function showStatTip(btn, s) {
+    if (active !== arena) return;
+    statTip.textContent = statEffectText(s);
+    statTip.classList.remove("hidden");
+    const r = btn.getBoundingClientRect(), t = statTip.getBoundingClientRect();
+    let left = r.left + r.width / 2 - t.width / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - t.width - 6));
+    statTip.style.left = left + "px";
+    statTip.style.top = Math.max(6, r.top - t.height - 8) + "px";
   }
   function updateArenaStatsUI() {
     const el = document.getElementById("arena-stats");
-    if (active !== arena || arena.statPoints <= 0 || arena.dead) { el.classList.add("hidden"); return; }
+    if (active !== arena || arena.statPoints <= 0 || arena.dead) { el.classList.add("hidden"); statTip.classList.add("hidden"); return; }
     el.classList.remove("hidden");
     document.getElementById("stat-prompt-txt").textContent = "SPEND POINTS — " + arena.statPoints;
     for (const s in STAT_LABELS) {
@@ -160,19 +327,50 @@
 
   // -- Arena death menu + spectate: on wreck, pick RESPAWN / SPECTATE / MAIN
   // MENU (no auto-respawn). Spectate follows living bots; NEXT (or N) cycles.
-  document.getElementById("death-respawn-btn").addEventListener("click", () => { if (active === arena && arena.dead) arena.respawnPlayer(); });
+  document.getElementById("death-respawn-btn").addEventListener("click", openRespawnWeaponSelect);
   document.getElementById("death-spectate-btn").addEventListener("click", () => { if (active === arena && arena.dead) { arena.spectate = true; arena.spectateCar = null; } });
   document.getElementById("death-mainmenu-btn").addEventListener("click", quitToMenu);
-  document.getElementById("spectate-next-btn").addEventListener("click", () => { if (active === arena) arena.nextSpectate(); });
-  document.getElementById("spectate-respawn-btn").addEventListener("click", () => { if (active === arena && arena.dead) arena.respawnPlayer(); });
+  // spectate NEXT is debounced 150ms so holding N (key-repeat) doesn't swap
+  // through every bot in a blink
+  let lastSpectateSwap = 0;
+  function trySpectateNext() {
+    if (active !== arena) return;
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    if (now - lastSpectateSwap < 150) return;
+    lastSpectateSwap = now;
+    arena.nextSpectate();
+  }
+  document.getElementById("spectate-next-btn").addEventListener("click", trySpectateNext);
+  document.getElementById("spectate-respawn-btn").addEventListener("click", openRespawnWeaponSelect);
   document.getElementById("spectate-menu-btn").addEventListener("click", quitToMenu);
   function updateDeathUI() {
     const menu = document.getElementById("death-menu");
     const spec = document.getElementById("spectate-ui");
-    const showMenu = active === arena && arena.started && arena.dead && !arena.spectate && arena.respawnT <= 0;
-    const showSpec = active === arena && arena.started && arena.dead && arena.spectate;
+    // while the RESPAWN weapon-picker is open the player is still `dead`, so
+    // suppress both death overlays or they re-show on top of the picker
+    const base = active === arena && arena.started && arena.dead && !weaponRespawn;
+    const showMenu = base && !arena.spectate && arena.respawnT <= 0;
+    const showSpec = base && arena.spectate;
     menu.classList.toggle("hidden", !showMenu);
     spec.classList.toggle("hidden", !showSpec);
+  }
+
+  // touch ABILITY buttons: one per equipped ability (primary=ability1,
+  // secondary=ability2), labelled HOOK/CHARGE per the loadout; hidden when the
+  // slot has no ability. Only relevant on touch (buttons live in #touch-controls).
+  let abilitySig = "";
+  function updateAbilityButtons() {
+    if (active !== arena || !arena.loadout) return;
+    const L = arena.loadout;
+    const a1 = arena.weaponAbility(L.weapon1 && L.weapon1.type);
+    const a2 = arena.weaponAbility(L.weapon2 && L.weapon2.type);
+    const sig = (a1 ? a1.name : "-") + "|" + (a2 ? a2.name : "-") + "|" + (arena.dead ? "d" : "a");
+    if (sig === abilitySig) return; // only touch the DOM when it changes
+    abilitySig = sig;
+    const b1 = document.getElementById("touch-ability1"), b2 = document.getElementById("touch-ability2");
+    const show = !arena.dead;
+    b1.textContent = a1 ? a1.name : ""; b1.classList.toggle("hidden", !a1 || !show);
+    b2.textContent = a2 ? a2.name : ""; b2.classList.toggle("hidden", !a2 || !show);
   }
 
   // -- Arena loadout / equip panel: shows your 5 slots + nearby collectible
@@ -289,12 +487,13 @@
       if (vis("weapon-select")) backToStart();
       else if (vis("options-screen")) closeOptions();
       else if (vis("guide-screen")) game.closeGuide();
+      else if (vis("arena-guide-screen")) closeArenaGuide();
       else if (active === arena && arena.spectate) arena.spectate = false; // back to the death menu
       else if (active === arena && arena.dead) { /* the death menu owns the screen */ }
       else if (active) active.togglePause();
     }
     else if (e.code === "KeyN" || e.code === "Enter") {
-      if (active === arena && arena.spectate) arena.nextSpectate(); // cycle the followed bot
+      if (active === arena && arena.spectate) trySpectateNext(); // cycle (debounced vs key-repeat)
       else nextRound();
     }
     else if (e.code === "KeyB") { if (active === game) game.toggleShop(); }
@@ -356,6 +555,11 @@
       if (params.has("boss") && active === arena && arena.boss) { // pull the Titan into view
         arena.boss.x = arena.player.x + 40; arena.boss.y = arena.player.y - 190;
       }
+      if (params.has("magnet") && active === arena) { // preview the roaming Magnet boss
+        arena.boss = arena.spawnCentralBoss("magnet");
+        arena.boss.x = arena.player.x + 40; arena.boss.y = arena.player.y - 240;
+        arena.boss.overload = params.has("overload") ? 5 : 0; // &overload shows the vulnerable window
+      }
       if (params.has("loadout") && active === arena && arena.loadout) { // preview mixed-tier parts
         arena.loadout.tires = makePart("tires", "tires", 2);
         arena.loadout.engine = makePart("engine", "engine", 4);
@@ -384,8 +588,15 @@
         arena.mines.push({ x: pp.x + 150, y: pp.y + 95, owner: foe, arm: 0, dmg: 20, dead: false });
       }
       if (params.has("dead") && active === arena) { arena.damagePlayer(99999); arena.respawnT = 0; } // preview death menu
+      if (params.has("respawnpick") && active === arena) { arena.damagePlayer(99999); arena.respawnT = 0; openRespawnWeaponSelect(); } // preview the respawn weapon-picker
       if (params.has("spectate") && active === arena) { arena.damagePlayer(99999); arena.respawnT = 0; arena.spectate = true; } // preview spectate
+      if (params.has("hook") && active === arena) { // preview the minelayer hook mid-reel
+        arena.loadout.weapon1 = makePart("weapon", "minelayer", 0); arena.startWeapon = "minelayer"; arena.applyStats();
+        const pp = arena.player, foe = arena.bots[0];
+        if (foe) { foe.x = pp.x + 320; foe.y = pp.y - 30; arena.fireHook(pp, Math.atan2(foe.y - pp.y, foe.x - pp.x)); for (let i = 0; i < 6; i++) arena.updateHooks(1 / 60); }
+      }
       if (params.has("pause") && active === arena) arena.togglePause(); // preview arena pause menu
+      if (params.has("guide") && active === arena) { arena.togglePause(); openArenaGuide(); } // preview arena field guide
     }
     const screen = params.get("screen");
     if (screen) {
@@ -430,7 +641,7 @@
       acc += frame;
       while (acc >= STEP) { active.update(STEP); acc -= STEP; }
       active.renderer.draw();
-      if (active === arena) { updateArenaStatsUI(); updateLoadoutPanel(); updateDeathUI(); } // level-ups / loot / death
+      if (active === arena) { updateArenaStatsUI(); updateLoadoutPanel(); updateDeathUI(); updateAbilityButtons(); } // level-ups / loot / death / ability buttons
     } else {
       acc = 0; // on the menu nothing simulates; don't bank time to burst later
     }

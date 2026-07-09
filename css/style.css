@@ -187,9 +187,52 @@ body.touch-mode:has(.overlay:not(.hidden)) #touch-controls { display: none; }
 
 #touch-fire { right: 26px; bottom: 46px; width: 88px; height: 88px; font-size: 14px; }
 #touch-drift { right: 130px; bottom: 22px; width: 68px; height: 68px; font-size: 12px; }
+/* ability buttons: primary (ability1) above FIRE, secondary (ability2) left of it */
+#touch-ability1 { right: 40px; bottom: 142px; width: 60px; height: 60px; font-size: 10px; }
+#touch-ability2 { right: 206px; bottom: 22px; width: 64px; height: 64px; font-size: 10px; }
 /* pause lives in the extreme corner — outside the arena on letterboxed
    phones, and clear of the canvas HUD panel */
 #touch-pause { top: 10px; right: 12px; width: 44px; height: 44px; font-size: 15px; }
+
+/* ============================================================= */
+/* TEST MODE — dev-only, DELETE THIS BLOCK LATER (with the HTML   */
+/* #test-panel/#test-mode-btn and the main.js initTestPanel).     */
+/* ============================================================= */
+#test-mode-btn {
+  margin-top: 18px; padding: 8px 16px; font-size: 13px; font-weight: 700;
+  letter-spacing: 1px; color: #8ff5ff; background: rgba(20, 40, 44, 0.7);
+  border: 1px dashed #3a7a80; border-radius: 8px; cursor: pointer;
+}
+#test-mode-btn:hover { background: rgba(30, 60, 66, 0.9); }
+#test-panel.hidden { display: none; }
+#test-panel {
+  position: fixed; left: 12px; bottom: 12px; z-index: 50;
+  background: rgba(10, 20, 22, 0.88); border: 1px dashed #3a7a80;
+  border-radius: 10px; padding: 8px 10px; width: 300px;
+  font-family: "Segoe UI", sans-serif;
+}
+#test-panel .test-title { color: #8ff5ff; font-weight: 700; font-size: 12px; letter-spacing: 1px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+#test-panel .test-x { background: none; border: none; color: #ff8b7a; font-size: 16px; cursor: pointer; line-height: 1; padding: 0 4px; }
+#test-panel .test-label { color: #7d8a8c; font-size: 9px; letter-spacing: 1px; margin: 6px 0 3px; }
+#test-panel .test-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+#test-panel .test-row button {
+  flex: 1; min-width: 52px; padding: 5px 4px; font-size: 10px; font-weight: 700;
+  color: #d7e6e8; background: rgba(40, 60, 66, 0.8); border: 1px solid #2a4a50;
+  border-radius: 5px; cursor: pointer;
+}
+#test-panel .test-row button:hover { background: rgba(60, 90, 96, 0.95); border-color: #4ad9e6; }
+#test-panel .test-inline { color: #9fb0b2; font-size: 10px; font-weight: 700; align-self: center; }
+#test-panel #test-bot-lvl { width: 46px; padding: 4px; font-size: 11px; text-align: center; background: rgba(10, 20, 22, 0.9); color: #d7e6e8; border: 1px solid #2a4a50; border-radius: 5px; }
+#test-panel #test-god.on { background: rgba(46, 111, 46, 0.9); border-color: #5fd35f; color: #d6ffd6; }
+
+/* stat-button hover tooltip (what the next point does) */
+#stat-tooltip.hidden { display: none; }
+#stat-tooltip {
+  position: fixed; z-index: 60; max-width: 300px;
+  background: rgba(10, 14, 16, 0.96); border: 1px solid #4a5a5c; border-radius: 8px;
+  padding: 7px 11px; color: #e0eaea; font-size: 12px; line-height: 1.45;
+  font-family: "Segoe UI", sans-serif; pointer-events: none;
+}
 
 .overlay {
   position: absolute;
@@ -839,6 +882,50 @@ body.touch-mode #spectate-ui { top: 8px; }
   line-height: 1.4;
 }
 
+/* ---- Arena field guide (weapons / parts / stats / bosses reference) ---- */
+#arena-guide-grid {
+  width: min(700px, 92vw);
+  max-height: 58vh;
+  overflow-y: auto;
+  padding: 4px 10px 4px 4px;
+  text-align: left;
+  scrollbar-width: thin;
+  scrollbar-color: #6e5f4b rgba(0, 0, 0, 0.35);
+}
+#arena-guide-grid::-webkit-scrollbar { width: 11px; }
+#arena-guide-grid::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.35); border-radius: 8px; }
+#arena-guide-grid::-webkit-scrollbar-thumb { background: #6e5f4b; border-radius: 8px; border: 2px solid rgba(12, 10, 8, 0.93); }
+#arena-guide-grid::-webkit-scrollbar-thumb:hover { background: #a58a3d; }
+.ag-section {
+  color: #ffd166;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-size: 13px;
+  margin: 15px 2px 8px;
+  border-bottom: 1px solid rgba(255, 209, 102, 0.3);
+  padding-bottom: 4px;
+}
+.ag-section:first-child { margin-top: 2px; }
+.ag-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 9px 13px;
+  margin-bottom: 8px;
+}
+.ag-name { color: #ffd166; font-weight: 700; font-size: 14px; letter-spacing: 0.5px; margin-bottom: 2px; }
+.ag-desc { color: #a89f92; font-size: 12px; line-height: 1.4; }
+.ag-tiers { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.ag-tier { padding: 3px 10px; border-radius: 5px; font-size: 11px; font-weight: 700; color: #14110c; }
+@media (max-height: 500px) {
+  #arena-guide-grid { max-height: 44vh; }
+  .ag-row { padding: 6px 10px; }
+  .ag-section { margin: 10px 2px 6px; }
+}
+
 /* ---- landscape phones: the viewport is SHORT (~390px) — compact every
    menu so nothing overflows. Mobile is always landscape (portrait shows the
    rotate overlay), so max-height is the signal, not max-width.
@@ -884,6 +971,8 @@ body.touch-mode #spectate-ui { top: 8px; }
   #joystick-zone { width: 124px; height: 124px; }
   #touch-fire { width: 76px; height: 76px; bottom: 38px; }
   #touch-drift { width: 58px; height: 58px; right: 112px; }
+  #touch-ability1 { width: 54px; height: 54px; right: 36px; bottom: 120px; }
+  #touch-ability2 { width: 54px; height: 54px; right: 178px; bottom: 22px; }
   /* side SHOP button: up and compact, clear of the FIRE/DRIFT cluster */
   #shop-toggle { top: 20%; transform: none; padding: 8px 10px; font-size: 11px; }
 }

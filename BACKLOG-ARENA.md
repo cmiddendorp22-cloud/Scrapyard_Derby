@@ -62,18 +62,17 @@ protecting your own). Nothing else in the genre does this — it's the hook.
   defenseless; their engine → now stalling) and it can be re-looted. Chain of
   custody across players = emergent drama. Show enemy part-health on approach;
   reward the surgical kill.
-- **Signature weapon — Minelayer + HOOK:** the mine weapon isn't just passive
-  zoning. It carries a **grapple/harpoon** that hooks onto another car and lets
-  you **drag them into your own minefield.** Turns the minelayer build into a
-  predator/trapper identity (lay a field, hook a victim, reel them in) instead
-  of a defensive camper. This is a standout, genre-unique combo.
-  - Counterplay (tuning open): the tether has a max length/duration and can be
-    broken — e.g. the hooked player fights it by driving away past a distance
-    threshold, or the rope/hook has HP and can be shot, or hitting an obstacle
-    snaps it. Needs real counterplay so the drag-into-mines combo isn't a
-    guaranteed kill.
-  - Both platforms: hook is an aimed action (desktop key + touch button),
-    distinct from the mine-drop input.
+- **✅ Signature weapon — Minelayer + HOOK DONE (2026-07-09):** the minelayer
+  carries a grapple that grabs the first car in its path and REELS it toward you
+  (into your minefield). Desktop RIGHT-CLICK toward the cursor, touch HOOK button
+  (auto-aim); separate from FIRE/autofire (mines stay on FIRE). Long leash
+  (`HOOK_MAX_LEN` 750), ~6s cooldown (`HOOK_CD`), ~0.5s reel (`HOOK_REEL_TIME`),
+  small chip on the grab (`HOOK_DAMAGE` 15, user pick). BOTS with a minelayer
+  use it too (drag you into their field). See changelog for the full wiring.
+  - STILL OPEN — counterplay/tuning: the hooked target currently can't resist
+    (no break-free by driving away, no shootable rope, no obstacle-snap). Add
+    real counterplay so the drag-into-mines combo isn't a guaranteed kill.
+    Also: bots don't yet coordinate mines-first-then-hook.
 - **Part tiers (open):** parts could carry the level/quality of the car they
   came from, so killing a high-level player drops better gear (doubles the
   reward of hunting the strong — pairs with the leader bounty).
@@ -173,14 +172,18 @@ everyone to hurt everyone).
    - Part durability (shoot a specific part OFF an enemy, re-loot it) + the
      minelayer HOOK are still open. Optional finer part sub-types (beyond
      tier) later.
-   - BACKLOG — MORE WEAPONS (beyond cannon / minelayer / ram): expand the
+   - MORE WEAPONS (beyond cannon / minelayer / ram): expand the
      weapon-slot roster so dual-weapon loadouts have real variety + each has a
      niche (dodges the "dual-cannon meta" risk noted in Known Balance Risks).
      Every new weapon needs: a player behavior (FIRE input, both platforms), a
      bot-AI usage in `ArenaBot`, a rendered `drawWeaponGear`, tier scaling, and
      to slot into the loot/drop system. Idea seeds:
-     • SHOTGUN / SCATTERGUN — short-range spread of pellets; deadly up close,
-       weak at range (pairs with ram to close distance).
+     • ✅ SHOTGUN DONE (2026-07-08): 6-pellet short-range cone (life 0.34s),
+       deadly up close / useless at range; player fires the spread in
+       `updateWeapon`, bots fire it only within 340px (`ArenaBot.update`), twin
+       stubby barrels in `drawWeaponGear`, added to `ARENA_WEAPON_TYPES` (flows
+       through loot) + the bot weapon pool + the weapon-select screen. Gated by
+       arena-level-test.js (pellet spread + short life, bot short-range gate).
      • FLAMETHROWER — short cone of continuous damage + brief burn DOT; area
        denial, melts anyone who hugs you.
      • RAILGUN / SNIPER — slow charge, one high-damage long-range piercing shot
@@ -200,37 +203,31 @@ everyone to hurt everyone).
    - BACKLOG: "tier adds strength" — higher-tier cannons fire tougher bullets
      (more clash strength), so gear also wins bullet duels. Deferred (user
      call: flat 1/3 for now).
-   - BACKLOG: TIRES tier → stronger/faster HANDBRAKE — better wheels should
-     improve handbrake response, not just grip/turn: raise `handbrakeBoost`
-     (Car's handbrake steering multiplier, base 1.3 — the Gauntlet's Drift
-     Master upgrade already proves the dial) and/or shorten the slide's
-     recovery so cuts snap quicker per tier. Applies to the player AND bots
-     (bots now use the handbrake for nose-cuts/parking, so their tier shows
-     in their driving too). Wire in `applyStats` alongside the existing
-     tires→grip/turn effects.
-   - BACKLOG: dropped-part DESPAWN BLINK — a ground part should BLINK as it
-     nears its 30s despawn, blinking FASTER the closer it is to vanishing (so
-     you can tell a drop is about to expire and race for it). Cosmetic-only
-     (`fx*`/Math.random-driven, must not touch the sim): in `drawPartDrop`, once
-     `d.age` passes a threshold (e.g. last ~8s) flicker the chip's alpha/
-     visibility on a period that shrinks as `age → DROP_DESPAWN`. Same idea as
-     the Gauntlet scrap/skid fade-outs.
-   - BACKLOG: PLAYER shot spread / aim range — give the player's shots a small
-     firing radius/cone out of the FRONT of the car (a bit of aim latitude)
-     rather than a single dead-straight line, similar to how the bot cannon
-     already auto-aims within an arc. Lets the player shoot enemies that are
-     slightly off dead-center. (Tuning: cone width / how much lead-latitude.)
-   - BACKLOG: RAM frontal invulnerability — a car equipped with RAM takes NO
-     damage through its FRONT (and/or while actively ramming): bullets + frontal
-     crashes are shrugged off, matching the Gauntlet Bulldozer's plow. Gives ram
-     a defining defensive identity (the item-5 "dual-cannon meta" note wants
-     each weapon to have a niche). Applies to player AND enemies.
-     NOTE / potential change: reconsider if the ram is a SECONDARY (not just
-     primary) — a loadout of GUN + RAM would be very hard to fight (frontal
-     bullet-immunity while still shooting back). Options to weigh then: only the
-     PRIMARY weapon grants the frontal shield; or frontal immunity only while
-     actively charging/ramming (not passively); or ram-in-secondary gives a
-     weaker/partial frontal reduction. Decide when building this.
+   - ✅ TIRES tier → sharper HANDBRAKE DONE (2026-07-08): both `applyStats`
+     (player + `ArenaBot`) now set `handbrakeBoost = 1.3 + 0.10 * (tier+1)`
+     (base 1.3 → ~1.8 at legendary), so better wheels whip the nose around
+     faster on a drift for the player AND bots (whose nose-cuts/parking use the
+     handbrake). Wired next to the existing tires→grip/turn effects.
+   - ✅ dropped-part DESPAWN BLINK DONE (2026-07-08): `drawPartDrop` flickers a
+     drop's alpha in its final ~8s (`remain < 8`), the blink frequency ramping
+     from ~6 to ~32 as `age → DROP_DESPAWN`. Cosmetic (render-clock driven, no
+     sim touch).
+   - ✅ PLAYER aim latitude DONE (2026-07-09): shots are no longer a single
+     dead-straight line — on desktop they fire toward the MOUSE cursor, clamped
+     to a small forward cone (`AIM_CONE` 0.6 rad ≈ ±34°) out the front of the
+     car (`ArenaGame.playerAimAngle`). Touch fires straight ahead (no cursor).
+     Bot fire cone also narrowed (`persona.fireArc` → 1.2-1.6). See changelog.
+   - ✅ RAM frontal defense DONE (2026-07-08, refined 2026-07-09): ONLY when RAM
+     is the PRIMARY (weapon1) slot, while CHARGING/ramming (~138° front arc):
+     a frontal BULLET does 0 damage; a frontal CRASH does 0 UNLESS the other
+     car is ALSO a charging ram (head-on charge-vs-charge deals impact so ram
+     duels resolve — user refinement); a MINE always hurts. Everything else
+     (rear/side, non-charging) is 35% off. Ram in the SECONDARY slot grants
+     nothing. Shared `ramDamageMul(car, isPrimaryRam, charging, hitX, hitY,
+     srcType, source)` + `isChargingRam(car)` (arena-bot.js); the player car
+     carries a mirrored `chargingRam` flag; damage sites thread a hit position,
+     srcType ("bullet"/"mine"/"crash"/"slam"), and the attacking `source`
+     through `hurtCar`. Applies to player + bots. Gated by arena-level-test.js.
 
 **BOTS + COMBAT** — ✅ DONE (foundational, the "bots-first" decision).
 `ArenaBot` (js/arena/arena-bot.js) extends Car: HP, a weapon (cannon/ram/
@@ -243,16 +240,11 @@ source (`cars()`/`hurtCar()`/`isDeadCar()` unify it), with `shooter`/`owner`/
 respawn resets to level 1 (the locked "death resets" rule; head-start
 softening is item 9). Bots render as red cars with name+level+HP bar; red dots
 on the minimap.
-- **BACKLOG: AI chase-dodge** — when one bot is actively pursuing another,
-the chased bot should dodge laterally (left/right) rather than running in a
-straight line, so the pursuer cannot get easy sustained shots from directly
-behind. Tune this as a bot-AI behavior with a close-range/chase threshold and
-a short dodge window so it feels intentional rather than erratic.
-- **BACKLOG: AI mine avoidance** — bots should actively avoid enemy mines that
-are not their own, including by steering away or changing course when a mine is
-nearby, rather than driving straight through it. This should be a scoped
-behavior for hostile mines and should stay readable/consistent so it doesn't
-make bot movement feel random.
+- **✅ AI mine avoidance DONE (2026-07-08):** `ArenaBot.avoidMines` projects
+~0.4s ahead and blends steering away from any HOSTILE mine near that point (own
+mines ignored), capped-weight so combat lines stay readable; runs each step
+alongside wall avoidance, skipped mid ram-launch. (AI chase-dodge was dropped
+from the backlog per user.)
 - **BACKLOG: stronger bosses** — the arena boss encounters should feel more
 substantial and threatening over time. Add tuning ideas such as higher HP,
 stronger attack patterns, more aggressive movement, and more rewarding drops
@@ -284,21 +276,13 @@ you), and the current target is sticky (persona.sticky, no flip-flopping).
 Nearest effective target wins; Titan-swarm/loot/farm unchanged below combat.
 NOT yet: distinct per-weapon bot AI, mine HOOK.
 
-**BACKLOG — evasive driving when CHASED:** when an AI is being chased/shot from
-behind by another car (attacker roughly on its tail + closing or firing), the
-chased bot should DODGE — weave/juke left-right instead of fleeing in a straight
-line, so the pursuer doesn't get free shots down a predictable lane. Detect
-"being chased": an enemy within ~300-400px in the REAR arc (attacker's position
-behind, its velocity/heading pointed at us), or taking hits from behind
-(`lastHitBy` + hit direction). Response: overlay a serpentine steer (sin-based
-weave with a per-bot seeded phase/period so bots don't all weave identically —
-ties into the AI-randomness item), maybe brief handbrake feints. Should also
-apply when fleeing the player. Keep seeded-deterministic.
+(AI chase-dodge / evasive-when-chased was dropped from the backlog per user.)
 
-**BACKLOG — bigger bot NAME pool:** `BOT_NAMES` in arena-bot.js is only ~20, so
-duplicate names show up on the leaderboard/tags in a single run (e.g. two
-"MADMAX"). Expand it a lot (target ~80-120) for variety; keep the grimy
-scrapyard/derby tone. Candidate additions (dedupe against the existing 20):
+**✅ bigger bot NAME pool DONE (2026-07-08):** `BOT_NAMES` expanded ~20 → ~78,
+and `ArenaGame.uniqueBotName` draws WITHOUT REPLACEMENT (a name no living bot is
+using) so the leaderboard/killfeed never shows duplicate handles in a run
+(seeded pick → deterministic; falls back to the full pool if all are taken).
+Original candidate list kept below for reference:
 LUGNUT, ROADKILL, T-BONE, SMASHMOUTH, CARNAGE, RIPTIDE, DEMOLITION, JACKHAMMER,
 HELLCAT, WIDOWMAKER, GEARHEAD, CHOPSHOP, BACKFIRE, SPARKPLUG, MUFFLER, TAILPIPE,
 RADIATOR, CAMSHAFT, CRANKSHAFT, MANIFOLD, DRIVESHAFT, FLATLINE, ROLLCAGE,
@@ -341,9 +325,10 @@ the ArenaBot constructor — orbitRange ±60-70, orbitBias ±0.25, throttleMul
 0.86-1.0, weavePhase/Freq/Amp (a sim-clock sine wobble applied to combat steer,
 long drives >300px, and idle cruising; OFF near pickups so parking stays exact),
 plus `orbitDir` rolled instead of id-parity. Engagement ranges (450/560) left
-EXACT. Still open if clumping persists: (b) periodic orbit-flip/juke timers,
-(c) separation steering, (d) target hysteresis — and the standstill-dash from
-the evasive-driving entry below.
+EXACT. Layer (c) SEPARATION STEERING is considered RESOLVED (user: clumping is
+fixed — personas + wall/mine avoidance + the wall-fight/duel-resolution passes
+spread bots out; dropped from backlog). Still optionally open if clumping ever
+returns: (b) periodic orbit-flip/juke timers, (d) target hysteresis.
 ✅ WALL-FIGHT fix DONE (user report: edge duels hugged the wall in a shooting
 line): combat orbit is now a RING-POINT GOAL clamped into the arena margin
 ("flatten to safe line") + an N/E/S/W wall-identity U-turn that flips orbitDir
@@ -391,14 +376,30 @@ identical states never mirror into loops). See changelog 2026-07-07.
      Keeps the center genuinely contested.
    - Later on this item: **roaming events** — periodic "scrap storm" /
      junk-meteor cache at an announced spot.
-   - BACKLOG — MORE BOSSES (beyond the JUNK TITAN): add variety so the center
-     isn't always the same fight. Rotate/pick per boss-cycle, or add secondary
-     bosses at other map landmarks. Idea seeds (each wants a distinct mechanic
-     + signature drop, reuse `ArenaBoss` where possible):
+   - MORE BOSSES (beyond the JUNK TITAN): add variety so the center
+     isn't always the same fight. The central boss now ALTERNATES per respawn
+     (`spawnCentralBoss` seed-picks Titan/Magnet). Idea seeds (each wants a
+     distinct mechanic + signature drop, reuse `ArenaBoss` where possible):
+     • ✅ THE MAGNET DONE (2026-07-08; movement + bot-AI 2026-07-09): a gravity
+       well that HUNTS the nearest car (slow relentless stalk — its pull is a
+       MOVING threat) — a constant inward pull (quadratic ramp, `MAGNET_PULL_R`
+       640) you fight with throttle; periodically freezes + telegraphs a hard
+       MEGA-PULL (`magnetMegaPull`: yank + heavy damage) then OVERLOADS for
+       ~2.6s, its ONLY vulnerable window (normal weapons pling off otherwise —
+       routed in `hurtBoss` by `kind==="magnet"`). Drags loose SCRAP (heals it)
+       + MINES (bypass its armor = its weakness, credited to the owner) toward
+       the core; CRUSHES cars mashed against it (`MAGNET_CRUSH_DPS`). Tanky
+       (coreHp 1800 — must be hard to outplay). BOTS play it smart: hold at the
+       PULL'S EDGE, gun bots bait the OVERLOAD window (hold fire vs armor),
+       minelayers feed mines into the pull, rams only charge once it overloads.
+       `ArenaMagnet` in arena-boss.js; purple minimap diamond + boss bar, cyan
+       "OVERLOADED" state, red/blue poles + collapsing telegraph ring in
+       `drawMagnet`. Preview `?mode=arena&magnet[&overload]`. Gated by
+       arena-level-test.js (pull, overload-only vulnerability, mine-weakness +
+       scrap-heal, mega-pull, kill/respawn, Titan/Magnet alternation, hunt
+       movement, bot pull-edge + overload-bait).
      • THE CRUSHER — mobile wrecking-ball/flail boss that roams (vs the Titan's
        plates), swinging a tethered ball; dodge the arc.
-     • THE MAGNET / SCRAP HOARDER — hoovers nearby scrap + can grapple-pull cars
-       toward it (prototype the minelayer HOOK on it); pops into an XP piñata.
      • THE GUNSHIP — glass-cannon turret boss: low HP, brutal ranged barrage /
        spread; punishes standing still, rewards rushing it.
      • THE SWARM QUEEN — spawns minion bikes/drones (like the Gauntlet HAULER),
@@ -465,12 +466,10 @@ identical states never mirror into loops). See changelog 2026-07-07.
      Bot-vs-bot combat also got a stalemate fix here: 0.85-rad fire cone,
      velocity-LEAD cannon shots, and a 1.2s `aimStuckT` handbrake-pivot that
      breaks mutual-orbit circling (the Gauntlet's old pursuit-circle disease).
-   - BACKLOG: spectate LOADOUT view — while spectating, show the watched bot's
-     equipped parts (its tires/engine/weapon/armor + tiers, tier-colored like
-     the player's own panel). Natural home: reuse/retarget the `#arena-loadout`
-     DOM panel (read-only — no equip buttons) or a compact canvas readout under
-     the "SPECTATING: name" label; swap contents when the camera hands off or
-     NEXT cycles. Lets you scout builds and see WHY a bot is winning.
+   - ✅ spectate LOADOUT view DONE (2026-07-07): while spectating, the
+     `#arena-loadout` panel shows the watched bot's tires/engine/weapon/armor
+     read-only ("NAME — PARTS", tier-colored, no equip controls), swapping on
+     NEXT / death hand-off. See changelog.
    - BACKLOG: spectate KILLER hand-off — if the car you're spectating gets
      wrecked by another car (any player/bot — NOT the boss), auto-swap the
      spectate camera to whoever killed it (its `lastHitBy`) so you keep watching
@@ -556,17 +555,22 @@ identical states never mirror into loops). See changelog 2026-07-07.
 
 ## User queue — 2026-07-07 batch 2 additions
 
-- SECONDARY-SLOT WEAPON BEHAVIOR (user; generalized from "ram can't charge in
-  secondary"): EVERY weapon should behave differently in the SECONDARY slot vs
-  primary — design a per-weapon secondary mode. Seeds: RAM secondary = no
-  charging (inert or a passive plow/collision bonus until ⇄ promoted); CANNON
-  secondary = ? (slower fire? auto-turret?); MINELAYER secondary = ? (fewer/
-  weaker mines?). Decide each when building — the ⇄ swap makes slot choice a
-  real decision.
-- IN-GAME WIKI SCREEN (user pick): a Field-Guide-style menu screen (rendered
-  in-code, no assets) documenting weapons, part slots + the 5 tiers, stats,
-  the Junk Titan, XP/kill/death rules, controls. Entry point: pause menu
-  and/or start screen.
+- ✅ PRIMARY/SECONDARY INPUT MODEL DONE (2026-07-09, user Q&A — scalable): the
+  slot now decides the INPUT binding, not a separate behavior. `weaponAbility`
+  declares each weapon's ability (ram→CHARGE hold, minelayer→HOOK click, guns→
+  none); `resolvePlayerInputs` maps left/right-click + auto-fire toggle + touch
+  buttons to spammables (both slots on FIRE) and abilities (PRIMARY→left,
+  SECONDARY→right; a primary hook claims left so mines go on auto-fire). Touch
+  gets one ABILITY button per equipped ability. Add a weapon + its `weaponAbility`
+  entry and it slots in. See changelog. (Distinct secondary STAT tweaks — e.g.
+  weaker mines in secondary — could still layer on top later if wanted.)
+- ✅ IN-GAME FIELD GUIDE DONE (2026-07-08): a pause-screen reference
+  (`#arena-guide-screen`, built by `buildArenaGuide` in main.js from the live
+  ARENA_WEAPONS / ARENA_TIERS catalogs so it can't drift) — sections for
+  WEAPONS (live-rendered portraits), PART SLOTS + the 5 tier chips, STATS, and
+  the two CENTRAL BOSSES (Titan plates→core, Magnet overload/mine-weakness).
+  Opened by a `#arena-guide-btn` shown only in Arena; ESC/BACK returns to
+  pause. Preview `?mode=arena&guide`. Desktop + mobile screenshot-verified.
 - AUTOMATIC REVIVE (user): auto-revive after death — e.g. the death menu
   auto-respawns after a countdown (spectate/menu still selectable), or a
   revive mechanic/item. Scope TBD with user when built.

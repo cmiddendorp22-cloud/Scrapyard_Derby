@@ -99,6 +99,7 @@ class Game {
     document.getElementById("pause-screen").classList.toggle("hidden", !this.paused);
     if (this.paused) {
       document.getElementById("guide-btn").classList.remove("hidden"); // Gauntlet has the Field Guide
+      document.getElementById("arena-guide-btn").classList.add("hidden"); // ...not the Arena one
     } else { // resuming closes the sub-menus too
       document.getElementById("guide-screen").classList.add("hidden");
       document.getElementById("options-screen").classList.add("hidden");

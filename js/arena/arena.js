@@ -27,7 +27,21 @@ const REVENGE_XP = 120;           // bonus XP for wrecking your nemesis (the bot
 const KILL_FLOOR = 20;            // minimum XP for any non-boss kill (so fresh enemies still pay)
 const PICKUP_RANGE = 180;         // a ground part within this range is "collectible" (shows in the panel)
 const DROP_DESPAWN = 30;          // seconds a dropped part lingers before vanishing
+const MINE_LIFE = 20;             // seconds a mine sits before it despawns
 const DROP_CAP = 40;              // max ground parts before the oldest is culled
+const AIM_CONE = 0.6;            // player mouse-aim: shots swivel up to ~34° off the nose (a small forward radius)
+// -- minelayer HOOK (drag a car into your minefield) --
+const HOOK_MAX_LEN = 375;        // reach / leash length — SAME at every tier (user)
+// hook extend speed scales slightly with the minelayer tier (user): slow at low
+// tiers, faster at high — but a small range (barely changes bottom→top)
+const HOOK_SPEED = 1270;         // extend speed — SAME at every tier (the old uncommon value, user)
+const MINE_BASE = 135;           // player mine base damage (× the 0.75→1.5 tier mult)
+const HOOK_CD = 6;               // seconds between hooks (at reload 0)
+const HOOK_CD_MIN = 4;           // hook cooldown at MAX reload (linear between)
+const HOOK_REEL_TIME = 1.2;      // reel a grabbed car/self in over this long (slower pull, user)
+const HOOK_STUN_AFTER = 0.5;     // a hooked car stays stunned (can't shoot) this long after the reel
+const HOOK_DAMAGE = 15;          // small chip on the grab (user: pulled + small damage)
+const HOOK_HEAD_R = 12;          // grab radius of the hook head
 const STREAK_MILESTONES = [3, 5, 8]; // wreck-streak counts that trigger a RAMPAGE callout (then every +5)
 const SLOT_UNLOCKS = { 5: "armor" }; // level → slot unlocked (weapon2 is open from L1 — user call)
 const BOT_COUNT = 8;             // bots kept alive in the world
@@ -43,6 +57,8 @@ const ARENA_WEAPONS = [
     desc: "Drop proximity mines and hook enemies into them." },
   { id: "ram",       name: "RAM",
     desc: "Armored Front, boost into enemies and crush them." },
+  { id: "shotgun",   name: "SHOTGUN",
+    desc: "Close-range pellet spread — devastating up close, useless at range." },
 ];
 
 class ArenaGame {
@@ -78,6 +94,8 @@ class ArenaGame {
     // weapon state (behaviors per this.startWeapon)
     this.bullets = [];                // cannon shots
     this.mines = [];                  // minelayer drops
+    this.hooks = [];                  // active minelayer hooks {owner, angle, hx, hy, len, state, target, reelT, dead}
+    this.hookCd = 0;                  // player's hook cooldown
     this.fireCooldown = 0;
     // ram charge (hold FIRE to wind up, release to launch a boost)
     this.ramCharge = 0;               // 0..1 while holding
@@ -95,9 +113,9 @@ class ArenaGame {
     this._t = 0;                      // sim clock (collision cooldown keys)
     this.drops = [];                  // dropped parts on the ground {x,y,part,age,dead}
     this.playerLastHitBy = null;      // who last damaged the player (attribution)
-    this.boss = null;                 // central Junk Titan (built below)
-    this.bossRespawnT = 0;            // countdown to the next Titan
-    this._sawBoss = false;            // first-encounter banner latch
+    this.boss = null;                 // central boss (Titan/Magnet — built below)
+    this.bossRespawnT = 0;            // countdown to the next boss
+    this._sawBossKinds = {};          // first-encounter banner latch, per boss kind
     this.leaderboard = [];            // ranked [{car,name,level,xp,isPlayer,dead}]
     this.leaderCar = null;            // current #1 (the bounty target)
     this.lbTimer = 0;                 // throttle for recomputing the leaderboard
@@ -129,10 +147,11 @@ class ArenaGame {
     this.scatterScrap(SCRAP_TARGET);
     this.bots = [];
     for (let i = 0; i < BOT_COUNT; i++) this.spawnBot();
-    // central boss (the map's gravity well) — sits on the dense center cluster
+    // central boss (the map's gravity well) — the Junk Titan leads (its
+    // signature); respawns then alternate with the roaming Magnet
     this.boss = new ArenaBoss(ARENA.w / 2, ARENA.h / 2);
     this.bossRespawnT = 0;
-    this._sawBoss = false;
+    this._sawBossKinds = {};
     setSimRandom(prevRandom);
     this.computeLeaderboard(); // seed the standings before the first tick
   }
@@ -148,9 +167,18 @@ class ArenaGame {
       x = rand(ARENA.wall + 100, ARENA.w - ARENA.wall - 100);
       y = rand(ARENA.wall + 100, ARENA.h - ARENA.wall - 100);
     } while (dist(x, y, this.player.x, this.player.y) < 700 && tries++ < 20);
-    const weapon = pick(["cannon", "cannon", "ram", "minelayer"]); // cannon-weighted
+    const weapon = pick(["cannon", "cannon", "ram", "minelayer", "shotgun"]); // cannon-weighted
     const level = randInt(1, Math.max(1, this.level + 2)); // scale with the player
-    this.bots.push(new ArenaBot(x, y, weapon, level));
+    this.bots.push(new ArenaBot(x, y, weapon, level, this.uniqueBotName()));
+  }
+
+  // a bot name no LIVING bot is currently using (draw without replacement), so
+  // the leaderboard/killfeed never shows duplicate handles; falls back to the
+  // full pool if every name is somehow taken. Seeded pick → deterministic.
+  uniqueBotName() {
+    const used = new Set(this.bots.map((b) => b.name));
+    const free = BOT_NAMES.filter((n) => !used.has(n));
+    return pick(free.length ? free : BOT_NAMES);
   }
 
   // -- leveling ---------------------------------------------------------------
@@ -184,9 +212,11 @@ class ArenaGame {
   // spend 1 banked point into a stat (non-blocking — called mid-drive)
   spendStat(name) {
     if (this.statPoints <= 0 || !(name in this.stats) || this.stats[name] >= STAT_CAP) return;
+    const frac = this.maxHp > 0 ? clamp(this.hp / this.maxHp, 0, 1) : 1; // HP% before the change
     this.stats[name]++;
     this.statPoints--;
     this.applyStats();
+    this.hp = frac * this.maxHp; // upgrading HEALTH keeps the SAME HP% at the new max (user)
   }
 
   // recompute derived values from stats (health/speed/reload/regen) +
@@ -198,10 +228,12 @@ class ArenaGame {
     const eng = L.engine ? 1 + 0.05 * (L.engine.tier + 1) : 1; // +5%/tier
     this.player.maxSpeed = ARENA_BASE.maxSpeed * spd * eng;
     this.player.engineAccel = ARENA_BASE.accel * spd * eng;
-    // TIRES part → grip + turn (better handling)
+    // TIRES part → grip + turn (better handling) + a sharper HANDBRAKE per tier
+    // (better tires whip the nose around faster on a drift; base 1.3)
     const tt = L.tires ? L.tires.tier + 1 : 0;
     this.player.grip = 7 + 1.0 * tt;
     this.player.turnRate = 2.9 + 0.08 * tt;
+    this.player.handbrakeBoost = 1.3 + 0.10 * tt;
     // HEALTH stat + ARMOR part → max HP; ARMOR alone → damage cut (the
     // DURABILITY stat was removed — per-tier value doubled to compensate)
     const at = L.armor ? L.armor.tier + 1 : 0;
@@ -232,20 +264,50 @@ class ArenaGame {
     if (this.banners.length > 3) this.banners.shift();
   }
 
-  // -- weapons (per this.startWeapon; behaviors land here, item 5) ------------
+  // -- weapons: primary/secondary INPUT MODEL (user, scalable) ----------------
+  // Each weapon declares an ABILITY (a deliberate action) if it has one:
+  //   • ram → CHARGE (a HOLD ability — coexists with spammable fire on left)
+  //   • minelayer → HOOK (a click/aimed ability — CLAIMS its slot's click)
+  //   • cannon/shotgun → none (spammable shot only)
+  // Spammable actions (cannon/shotgun shots, minelayer mines) fire on the FIRE
+  // channel = auto-fire toggle / touch FIRE / left-click (unless left-click is
+  // claimed by a primary click-ability, i.e. a primary minelayer's hook — then
+  // spammables are auto-fire only, which is why "mines are on auto-fire" there).
+  // Abilities bind by slot: PRIMARY → left-click, SECONDARY → right-click (touch
+  // gets one ABILITY button per slot). Add a weapon here and it slots in.
+  weaponAbility(type) {
+    if (type === "ram") return { name: "CHARGE", hold: true };
+    if (type === "minelayer") return { name: "HOOK", hold: false };
+    return null; // cannon / shotgun: spammable only
+  }
 
-  // RAM: hold FIRE to CHARGE (the car digs in / winds up), release to LAUNCH a
-  // boost whose strength scales with how long you held — the player-controlled
-  // version of the enemy RAMMER's telegraph→charge. Runs BEFORE integrate
-  // since it sets the Car.boost multiplier the physics reads. Body-damage vs
-  // cars arrives with combat.
+  // resolve the raw inputs into this frame's channels, given the loadout
+  resolvePlayerInputs() {
+    const L = this.loadout, inp = this.input;
+    const primAb = this.weaponAbility(L.weapon1 && L.weapon1.type);
+    const leftClaimed = !!(primAb && !primAb.hold); // a primary CLICK ability (hook) claims left-click
+    // FIRE channel drives spammables. When left-click is claimed by a primary
+    // click-ability, drop it (mines/spammables → auto-fire toggle / touch FIRE).
+    this._fireActive = leftClaimed ? (inp.autoFire || inp.touchFire) : inp.fire;
+    this._primHeld = inp.mouseDown || inp.touchAbility1; // primary ability → left-click
+    this._secHeld = inp.hookHeld || inp.touchAbility2;   // secondary ability → right-click
+    // which slot's channel drives the ram charge / the hook (null = not equipped)
+    this._ramSlot = L.weapon1 && L.weapon1.type === "ram" ? "p" : (L.weapon2 && L.weapon2.type === "ram" ? "s" : null);
+    this._hookSlot = L.weapon1 && L.weapon1.type === "minelayer" ? "p" : (L.weapon2 && L.weapon2.type === "minelayer" ? "s" : null);
+  }
+
+  // RAM: HOLD its slot input to CHARGE (dig in / wind up), release to LAUNCH a
+  // boost scaled by hold time — primary = left-click, secondary = right-click.
+  // Runs BEFORE integrate (sets the Car.boost the physics reads).
   updateRam(dt) {
+    this.resolvePlayerInputs();
     const p = this.player;
-    if (!this.hasRam()) { p.boost = 1; return; }
+    const held = this._ramSlot === "p" ? this._primHeld : this._ramSlot === "s" ? this._secHeld : false;
+    if (!this._ramSlot || this.player.stunT > 0) { p.boost = 1; p.chargingRam = false; if (this.ramBoostT > 0) this.ramBoostT -= dt; return; }
     if (this.ramBoostT > 0) {                 // mid-launch: strong boost, timed
       this.ramBoostT -= dt;
       p.boost = this.ramBoostT > 0 ? this.ramLaunchStr : 1;
-    } else if (this.input.fire) {              // holding: wind up + build charge
+    } else if (held) {                         // holding: wind up + build charge
       this.ramCharge = Math.min(1, this.ramCharge + dt / 0.8); // ~0.8s to full
       p.boost = 0.5;                           // dig in — slow while charging
     } else if (this.ramCharge > 0.12) {        // released with charge → LAUNCH
@@ -258,38 +320,272 @@ class ArenaGame {
       this.ramCharge = 0;
       p.boost = 1;
     }
+    // mirror "actively ramming" onto the player CAR (ramDamageMul/isChargingRam
+    // read it). Frontal defense is PRIMARY-ram only, launched + moving.
+    p.chargingRam = this._ramSlot === "p" && ramLaunchingFast(p, this.ramBoostT);
+  }
+
+  // Raw FULL-CIRCLE angle from the player to the mouse cursor (any direction),
+  // or null if there's no cursor (touch / mouse hasn't moved / no canvas rect).
+  // Maps client mouse coords → the logical viewport → world (inverse of the
+  // render camera transform).
+  mouseWorldAngle() {
+    const p = this.player, inp = this.input;
+    if (this.touchMode || !inp || !inp.hasMouse || !this.canvas.getBoundingClientRect) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const lx = ((inp.mouseX - rect.left) / rect.width) * WORLD.w;   // → logical screen x (0..1280)
+    const ly = ((inp.mouseY - rect.top) / rect.height) * WORLD.h;   // → logical screen y (0..720)
+    const wx = lx - WORLD.w / 2 + this.cam.x;                       // → world (undo camera translate)
+    const wy = ly - WORLD.h / 2 + this.cam.y;
+    return Math.atan2(wy - p.y, wx - p.x);
+  }
+
+  // Direction the player's SHOTS travel: the cursor angle CLAMPED to a small
+  // forward cone (`AIM_CONE`) — nudge off the nose but never backward — from the
+  // FRONT of the car. Touch / no cursor → straight out the nose. (The HOOK does
+  // NOT use this — it fires full-circle toward the cursor, see updatePlayerHook.)
+  playerAimAngle() {
+    const want = this.mouseWorldAngle();
+    if (want === null) return this.player.heading;
+    return this.player.heading + clamp(angleDiff(want, this.player.heading), -AIM_CONE, AIM_CONE);
   }
 
   // Fire BOTH equipped weapons on FIRE, each on its own cooldown. Tier scales
   // damage + fire rate; RELOAD stat also shortens the interval. Ram weapons are
   // handled in updateRam (they charge instead of firing here).
   updateWeapon(dt) {
+    this.resolvePlayerInputs();
     const reloadMul = 1 + this.stats.reload * 0.08;
     for (const w of [this.loadout.weapon1, this.loadout.weapon2]) {
       if (!w) continue;
       w.cd = (w.cd || 0) - dt;
       if (w.type === "ram") continue;
-      if (!this.input.fire || w.cd > 0) continue;
+      if (!this._fireActive || w.cd > 0 || this.player.stunT > 0) continue; // spammables on the FIRE channel; stunned → can't fire
       const t = w.tier + 1, dmul = 1 + 0.12 * t, rate = reloadMul * (1 + 0.10 * t);
       const p = this.player, f = p.forward;
+      const aimAng = this.playerAimAngle(); // mouse-aim within the forward cone
+      const af = { x: Math.cos(aimAng), y: Math.sin(aimAng) };
       if (w.type === "cannon") {
         w.cd = 0.3 / rate;
-        const bx = p.x + f.x * (p.length / 2 + 6), by = p.y + f.y * (p.length / 2 + 6);
-        const b = new Bullet(bx, by, p.heading, 560, true, 26 * dmul);
+        const bx = p.x + f.x * (p.length / 2 + 6), by = p.y + f.y * (p.length / 2 + 6); // from the front of the car
+        const b = new Bullet(bx, by, aimAng, 560, true, 26 * dmul);
         b.life = 2.5;       // longer range for the big map
         b.shooter = p;      // kill attribution
         this.bullets.push(b);
-        this.particles.sparks(bx, by, p.heading, 3, 140);
-        p.vx -= f.x * 20; p.vy -= f.y * 20; // recoil
+        this.particles.sparks(bx, by, aimAng, 3, 140);
+        p.vx -= af.x * 20; p.vy -= af.y * 20; // recoil opposite the shot
+        this.audio.playShoot();
+      } else if (w.type === "shotgun") {
+        // close-range pellet spread: several short-lived pellets in a cone.
+        // Big damage if most connect up close, harmless at range (pellets die
+        // fast + fan out). Heavy recoil, slower cooldown than the cannon.
+        w.cd = 0.75 / rate;
+        const pellets = 6, spread = 0.20;
+        const bx = p.x + f.x * (p.length / 2 + 6), by = p.y + f.y * (p.length / 2 + 6);
+        for (let i = 0; i < pellets; i++) {
+          const ang = aimAng + (i / (pellets - 1) - 0.5) * 2 * spread; // spread centered on the aim
+          const b = new Bullet(bx, by, ang, 620, true, 9 * dmul);
+          b.life = 0.34; b.radius = 3; // short reach
+          b.strength = 0.35; // weak pellets: one normal cannon bullet (str 1) breaks ~3 of them
+          b.shooter = p;
+          this.bullets.push(b);
+        }
+        this.particles.sparks(bx, by, aimAng, 8, 220);
+        p.vx -= af.x * 55; p.vy -= af.y * 55; // heavy kick opposite the shot
         this.audio.playShoot();
       } else if (w.type === "minelayer") {
         w.cd = 1.0 / rate;
         const mx = p.x - f.x * (p.length / 2 + 4), my = p.y - f.y * (p.length / 2 + 4);
-        this.mines.push({ x: mx, y: my, owner: this.player, arm: 1.0, dmg: 30 * dmul, dead: false });
+        this.mines.push({ x: mx, y: my, owner: this.player, arm: 1.0, age: 0, dmg: this.mineDamageOf(this.player), dead: false });
         if (this.mines.length > 25) this.mines.shift();
         this.particles.scrapPuff(mx, my);
       }
     }
+  }
+
+  // -- minelayer HOOK: fire a grapple that grabs the first car in its path and
+  // reels it toward you (into your minefield). Separate from FIRE/autofire —
+  // right-click (toward the cursor) on desktop, a HOOK button on touch. --------
+  hasMinelayer() {
+    const L = this.loadout;
+    return !!(L && ((L.weapon1 && L.weapon1.type === "minelayer") || (L.weapon2 && L.weapon2.type === "minelayer")));
+  }
+
+  // touch has no cursor → aim the hook at the nearest car within reach (else nose)
+  hookAutoAim(owner) {
+    let best = null, bd = HOOK_MAX_LEN;
+    for (const c of this.cars()) {
+      if (c === owner || this.isDeadCar(c)) continue;
+      const d = dist(owner.x, owner.y, c.x, c.y);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best ? Math.atan2(best.y - owner.y, best.x - owner.x) : owner.heading;
+  }
+
+  // RELOAD shortens the hook cooldown linearly: HOOK_CD (6s) at reload 0 down to
+  // HOOK_CD_MIN (4s) at max reload (STAT_CAP). Shared by the player + bots.
+  hookCooldown(reload) {
+    return HOOK_CD - (HOOK_CD - HOOK_CD_MIN) * clamp((reload || 0) / STAT_CAP, 0, 1);
+  }
+
+  updatePlayerHook(dt) {
+    this.resolvePlayerInputs();
+    if (this.hookCd > 0) this.hookCd -= dt;
+    // the hook fires on the minelayer's SLOT channel (primary=left, secondary=right)
+    const held = this._hookSlot === "p" ? this._primHeld : this._hookSlot === "s" ? this._secHeld : false;
+    if (!this._hookSlot || !held || this.hookCd > 0 || this.player.stunT > 0) return; // stunned → no hook
+    // FULL-CIRCLE toward the cursor (no forward-cone clamp — user); touch auto-aims
+    let ang;
+    if (this.touchMode) ang = this.hookAutoAim(this.player);
+    else { ang = this.mouseWorldAngle(); if (ang === null) ang = this.player.heading; }
+    if (this.fireHook(this.player, ang)) this.hookCd = this.hookCooldown(this.stats.reload);
+  }
+
+  // launch a hook (returns false if the owner already has one out — one at a time)
+  fireHook(owner, angle) {
+    if (this.hooks.some((h) => h.owner === owner && !h.dead)) return false;
+    this.hooks.push({
+      owner, angle,
+      hx: owner.x + Math.cos(angle) * owner.radius,
+      hy: owner.y + Math.sin(angle) * owner.radius,
+      len: 0, speed: this.hookSpeedOf(owner), // tier-scaled extend speed
+      state: "out", target: null, reelT: 0, dead: false,
+    });
+    if (this.audio.playShoot) this.audio.playShoot();
+    return true;
+  }
+
+  updateHooks(dt) {
+    for (const h of this.hooks) {
+      if (h.dead) continue;
+      const owner = h.owner;
+      if (this.isDeadCar(owner)) { h.dead = true; continue; }
+      if (h.state === "out") {
+        const spd = h.speed || HOOK_SPEED;
+        h.hx += Math.cos(h.angle) * spd * dt;
+        h.hy += Math.sin(h.angle) * spd * dt;
+        h.len += spd * dt;
+        // grab the FIRST car the head reaches (not the owner)
+        for (const c of this.cars()) {
+          if (c === owner || this.isDeadCar(c)) continue;
+          if (dist(h.hx, h.hy, c.x, c.y) < HOOK_HEAD_R + c.radius) {
+            h.state = "reel"; h.target = c; h.reelT = 0;
+            this.hurtCar(c, HOOK_DAMAGE, owner, h.hx, h.hy, "hook"); // small chip on the grab
+            if (this.audio.playImpact) this.audio.playImpact(0.4);
+            break;
+          }
+        }
+        // else grab the central BOSS — too big to pull, so the reel drags YOU to
+        // IT (user); chips it on the grab, bypassing the Magnet's armor
+        if (h.state === "out" && this.boss && !this.boss.dead &&
+            dist(h.hx, h.hy, this.boss.x, this.boss.y) < HOOK_HEAD_R + this.boss.radius) {
+          h.state = "reel"; h.target = this.boss; h.reelT = 0; owner.reelingBoss = true;
+          this.hurtBoss(h.hx, h.hy, HOOK_DAMAGE, owner, true);
+          if (this.audio.playImpact) this.audio.playImpact(0.4);
+        }
+        if (h.state === "out" && (h.len >= HOOK_MAX_LEN ||
+            h.hx < ARENA.wall || h.hx > ARENA.w - ARENA.wall || h.hy < ARENA.wall || h.hy > ARENA.h - ARENA.wall)) {
+          h.dead = true; // missed / hit a wall
+        }
+      } else { // "reel"
+        const c = h.target;
+        const isBoss = c && c.kind; // a boss (titan/magnet) — invert the reel
+        if (!c || (isBoss ? c.dead : this.isDeadCar(c))) { h.dead = true; owner.reelingBoss = false; continue; }
+        h.reelT += dt;
+        if (isBoss) {
+          // the boss is the ANCHOR: reel the HOOKER in (don't move/stun the boss)
+          owner.reelingBoss = true;
+          const dx = c.x - owner.x, dy = c.y - owner.y, d = Math.hypot(dx, dy) || 1;
+          const gap = c.radius + owner.radius + 6;
+          const toGo = Math.max(0, d - gap);
+          const remaining = Math.max(dt, HOOK_REEL_TIME - h.reelT);
+          const move = toGo * Math.min(1, dt / remaining);
+          const nx = dx / d, ny = dy / d;
+          owner.x += nx * move; owner.y += ny * move;
+          owner.vx = nx * (move / dt); owner.vy = ny * (move / dt);
+          const m = ARENA.wall + owner.radius;
+          owner.x = clamp(owner.x, m, ARENA.w - m); owner.y = clamp(owner.y, m, ARENA.h - m);
+          h.hx = c.x; h.hy = c.y; // tether anchored on the boss
+          if (dist(owner.x, owner.y, c.x, c.y) <= gap + 12) { this.hookBossImpact(owner, c); h.dead = true; owner.reelingBoss = false; }
+          else if (h.reelT >= HOOK_REEL_TIME) { h.dead = true; owner.reelingBoss = false; }
+        } else { // drag the target toward the owner over ~HOOK_REEL_TIME
+          c.stunT = HOOK_STUN_AFTER; // STUNNED while reeled + HOOK_STUN_AFTER after (can't shoot)
+          const dx = owner.x - c.x, dy = owner.y - c.y, d = Math.hypot(dx, dy) || 1;
+          const gap = owner.radius + c.radius + 6;
+          const toGo = Math.max(0, d - gap);
+          const remaining = Math.max(dt, HOOK_REEL_TIME - h.reelT);
+          const move = toGo * Math.min(1, dt / remaining);
+          const nx = dx / d, ny = dy / d;
+          c.x += nx * move; c.y += ny * move;
+          c.vx = nx * (move / dt); c.vy = ny * (move / dt); // carry the reel momentum
+          const m = ARENA.wall + c.radius; // stay in-world
+          c.x = clamp(c.x, m, ARENA.w - m); c.y = clamp(c.y, m, ARENA.h - m);
+          h.hx = c.x; h.hy = c.y; // the tether follows the reeled car
+          const newD = dist(owner.x, owner.y, c.x, c.y);
+          if (newD <= gap + 10) { this.hookImpact(owner, c); h.dead = true; }   // reached the body → DETONATE
+          else if (h.reelT >= HOOK_REEL_TIME) h.dead = true;                    // timed out (blocked) → release
+        }
+      }
+    }
+    this.hooks = this.hooks.filter((h) => !h.dead);
+  }
+
+  // the equipped minelayer's tier for a car (player: either weapon slot; bot:
+  // its single weapon), or 0 if none — drives mine damage + hook speed
+  minelayerTierOf(owner) {
+    if (owner === this.player) {
+      const L = this.loadout;
+      const w = (L.weapon1 && L.weapon1.type === "minelayer") ? L.weapon1
+        : (L.weapon2 && L.weapon2.type === "minelayer") ? L.weapon2 : null;
+      return w ? w.tier : 0;
+    }
+    return owner.loadout && owner.loadout.weapon ? owner.loadout.weapon.tier : 0;
+  }
+
+  // minelayer tier multiplier (user): 0.75× at common → 1.5× at legendary, linear
+  mineTierMul(tier) { return 0.75 + 0.75 * clamp((tier || 0) / TIER_MAX, 0, 1); }
+
+  // THE single source of truth for a car's mine damage — the mines they DROP and
+  // the hook's detonation both read this. Scales 0.75→1.5 with the minelayer
+  // tier (user); bots also scale with level.
+  mineDamageOf(owner) {
+    const mul = this.mineTierMul(this.minelayerTierOf(owner));
+    if (owner === this.player) return MINE_BASE * mul;
+    return (36 + 3 * (owner.level || 1)) * mul; // +50% (was 24 + 2*level)
+  }
+
+  // hook extend speed — flat, the SAME at every tier (user); only mine/hook
+  // DAMAGE varies by tier (see mineDamageOf)
+  hookSpeedOf() { return HOOK_SPEED; }
+
+  // the reeled car reaches the hooker's BODY → it DETONATES (user): launch the
+  // two apart and deal ONE MINE of damage to the HOOKED car ONLY (not the
+  // hooker). srcType "mine" so it bypasses ram frontal immunity (mines counter ram).
+  hookImpact(owner, victim) {
+    const dx = victim.x - owner.x, dy = victim.y - owner.y, d = Math.hypot(dx, dy) || 1;
+    const nx = dx / d, ny = dy / d, KICK = 460;
+    victim.vx = nx * KICK; victim.vy = ny * KICK;               // launch the hooked car away
+    owner.vx -= nx * KICK * 0.7; owner.vy -= ny * KICK * 0.7;   // hooker recoils the other way
+    this.hurtCar(victim, this.mineDamageOf(owner), owner, victim.x, victim.y, "mine");
+    const ex = (owner.x + victim.x) / 2, ey = (owner.y + victim.y) / 2;
+    this.particles.explosion(ex, ey);
+    this.particles.sparks(ex, ey, 0, 20, 320);
+    if (this.audio.playExplosion) this.audio.playExplosion();
+  }
+
+  // the hooker reels THEMSELVES into a BOSS (user) → detonate: fling the hooker
+  // back out + deal TRIPLE a mine of damage to the BOSS ONLY (bypasses Magnet
+  // armor). The boss isn't stunned or moved (it's the anchor).
+  hookBossImpact(owner, boss) {
+    const dx = owner.x - boss.x, dy = owner.y - boss.y, d = Math.hypot(dx, dy) || 1;
+    const nx = dx / d, ny = dy / d, KICK = 520;
+    owner.vx = nx * KICK; owner.vy = ny * KICK; // fling the hooker back out
+    const hx = boss.x + nx * boss.radius, hy = boss.y + ny * boss.radius; // the side they hit
+    this.hurtBoss(hx, hy, 3 * this.mineDamageOf(owner), owner, true);
+    this.particles.explosion(hx, hy);
+    this.particles.sparks(hx, hy, 0, 24, 340);
+    if (this.audio.playExplosion) this.audio.playExplosion();
   }
 
   // Bullet-vs-bullet clashing: shots from DIFFERENT entities block each other.
@@ -360,7 +656,7 @@ class ArenaGame {
       for (const car of this.cars()) { // damage any car but the shooter
         if (car === b.shooter || this.isDeadCar(car)) continue;
         if (dist(b.x, b.y, car.x, car.y) >= car.radius + b.radius) continue;
-        this.hurtCar(car, b.damage, b.shooter);
+        this.hurtCar(car, b.damage, b.shooter, b.x, b.y, "bullet"); // bullet pos → hit direction
         this.particles.sparks(b.x, b.y, Math.atan2(b.vy, b.vx) + Math.PI, 6, 180);
         b.dead = true; break;
       }
@@ -374,10 +670,10 @@ class ArenaGame {
   isDeadCar(car) { return car === this.player ? this.dead : car.deadFlag; }
 
   // route damage to the right HP pool + record the attacker for attribution
-  hurtCar(car, amount, source) {
+  hurtCar(car, amount, source, hitX, hitY, srcType) {
     if (source && source.noDmgT !== undefined) source.noDmgT = 0; // attacker IS landing damage
-    if (car === this.player) { this.playerLastHitBy = source; this.damagePlayer(amount); }
-    else { car.lastHitBy = source; car.hurt(amount); }
+    if (car === this.player) { this.playerLastHitBy = source; this.damagePlayer(amount, hitX, hitY, srcType, source); }
+    else { car.lastHitBy = source; car.hurt(amount, hitX, hitY, srcType, source); }
   }
 
   updateBots(dt) {
@@ -435,11 +731,11 @@ class ArenaGame {
 
   // -- social hooks: killfeed + nemesis + rampage streaks (item 8) ------------
 
-  // display name for any wrecker/victim (player, a bot, or the Titan)
+  // display name for any wrecker/victim (player, a bot, or a boss)
   nameOf(car) {
     if (!car) return "THE ARENA";
     if (car === this.player) return this.playerName;
-    if (car === this.boss) return "JUNK TITAN";
+    if (car && car.kind && car.name && (car.kind === "titan" || car.kind === "magnet")) return car.name;
     return car.name || "BOT";
   }
 
@@ -490,6 +786,14 @@ class ArenaGame {
       }
     }
     if (this.boss && !this.boss.dead) for (const c of cars) this.collideBoss(c);
+    // keep every car inside the world after collision/boss pushes — a roaming
+    // boss or a hard shove against a wall must never eject a car out of bounds
+    for (const c of cars) {
+      if (this.isDeadCar(c)) continue;
+      const m = ARENA.wall + c.radius;
+      c.x = clamp(c.x, m, ARENA.w - m);
+      c.y = clamp(c.y, m, ARENA.h - m);
+    }
   }
 
   collidePair(a, b) {
@@ -508,8 +812,8 @@ class ArenaGame {
     if (impact > 70 && this._t - (this.pairHits.get(key) ?? -1) > 0.3) {
       this.pairHits.set(key, this._t);
       const total = Math.max(1, aTow + bTow), dmg = (impact - 40) * 0.11;
-      this.hurtCar(a, dmg * (0.15 + 0.85 * (bTow / total)), b); // each hurt by the OTHER's push
-      this.hurtCar(b, dmg * (0.15 + 0.85 * (aTow / total)), a);
+      this.hurtCar(a, dmg * (0.15 + 0.85 * (bTow / total)), b, b.x, b.y, "crash"); // each hurt by the OTHER's push
+      this.hurtCar(b, dmg * (0.15 + 0.85 * (aTow / total)), a, a.x, a.y, "crash");
       const cx = a.x + nx * a.radius, cy = a.y + ny * a.radius;
       this.particles.sparks(cx, cy, Math.atan2(ny, nx), 8, 240);
       this.audio.playImpact(clamp(impact / 500, 0, 1));
@@ -518,21 +822,58 @@ class ArenaGame {
 
   // -- central Junk Titan boss (BACKLOG-ARENA item 6) -------------------------
 
+  // spawn the next central boss — ALTERNATES between the Junk Titan and the
+  // roaming Magnet on respawn (seeded pick → deterministic). `force` lets the
+  // preview hooks pin a specific one.
+  spawnCentralBoss(force) {
+    const kind = force || pick(["titan", "magnet"]);
+    return kind === "magnet"
+      ? new ArenaMagnet(ARENA.w / 2, ARENA.h / 2)
+      : new ArenaBoss(ARENA.w / 2, ARENA.h / 2);
+  }
+
   updateBossWorld(dt) {
     if (!this.boss) return;
     if (!this.boss.dead) { this.boss.update(dt, this); return; }
     this.bossRespawnT -= dt;
-    if (this.bossRespawnT <= 0) this.boss = new ArenaBoss(ARENA.w / 2, ARENA.h / 2);
+    if (this.bossRespawnT <= 0) this.boss = this.spawnCentralBoss();
+  }
+
+  // hard inward YANK + heavy damage when the Magnet unleashes its mega-pull
+  // (called from ArenaMagnet.update at the end of its wind-up)
+  magnetMegaPull(boss) {
+    for (const c of this.cars()) {
+      if (this.isDeadCar(c)) continue;
+      const dx = boss.x - c.x, dy = boss.y - c.y, d = Math.hypot(dx, dy) || 1;
+      if (d > MAGNET_PULL_R) continue;
+      const closeness = 1 - d / MAGNET_PULL_R;
+      c.vx += (dx / d) * 900 * (0.4 + closeness); c.vy += (dy / d) * 900 * (0.4 + closeness);
+      this.hurtCar(c, 26 + 34 * closeness, boss, boss.x, boss.y, "slam"); // worse the closer you are
+    }
+    this.particles.explosion(boss.x, boss.y);
+    this.particles.sparks(boss.x, boss.y, 0, 44, 460);
+    if (this.audio.playExplosion) this.audio.playExplosion();
   }
 
   // route incoming damage to the plate FACING the hit; if that plate is gone,
   // the core is exposed there and takes it instead. Tearing a plate off drops a
   // lootable weapon (the signature "rip a part off the enemy" mechanic).
-  hurtBoss(hitX, hitY, amount, source) {
+  // `bypass` = ignore the Magnet's armor (hook explosion + mines — its weakness)
+  hurtBoss(hitX, hitY, amount, source, bypass) {
     const boss = this.boss;
     if (!boss || boss.dead) return;
     boss.lastHitBy = source;
     boss.hitFlash = 0.1;
+    // THE MAGNET has no plates — it's armored EXCEPT during its overload window
+    // (bait the mega-pull, then burn the exposed core). Mines + the hook blast
+    // bypass this (its weakness).
+    if (boss.kind === "magnet") {
+      if (!bypass && !boss.isVulnerable()) { boss.hitFlash = 0.06; if (this.audio.playClank) this.audio.playClank(); return; }
+      boss.coreHp -= amount;
+      boss.hitFlash = 0.14;
+      if (boss.coreHp <= 0) { boss.dead = true; this.killBoss(source); }
+      return;
+    }
     let plate = null, best = 1e9;
     const hitAng = Math.atan2(hitY - boss.y, hitX - boss.x);
     for (const p of boss.plates) {
@@ -561,12 +902,12 @@ class ArenaGame {
 
   // core down: big XP to the killer + a scrap piñata + a bonus weapon drop
   killBoss(killer) {
-    const boss = this.boss, xp = 400;
+    const boss = this.boss, xp = boss.killXp || 400;
     this.feedWreck(killer, boss);
     this.bumpStreak(killer);
     if (killer === this.player) {
       this.kills++; this.addXp(xp);
-      this.banner("JUNK TITAN WRECKED", "+" + xp + " XP");
+      this.banner(boss.name + " WRECKED", "+" + xp + " XP");
     } else if (killer && killer.gainXp) {
       killer.gainXp(xp); // a bot toppled it
     }
@@ -595,7 +936,7 @@ class ArenaGame {
       if (d > R) continue;
       const ang = Math.atan2(c.y - boss.y, c.x - boss.x), f = 1 - d / R;
       c.vx += Math.cos(ang) * 520 * f; c.vy += Math.sin(ang) * 520 * f;
-      this.hurtCar(c, 30 * f, boss);
+      this.hurtCar(c, 30 * f, boss, boss.x, boss.y, "slam");
     }
     this.particles.explosion(boss.x, boss.y);
     this.particles.sparks(boss.x, boss.y, 0, 34, 380);
@@ -607,6 +948,7 @@ class ArenaGame {
   collideBoss(car) {
     const boss = this.boss;
     if (!boss || boss.dead || this.isDeadCar(car)) return;
+    if (car.reelingBoss) return; // being hook-reeled into the boss → the hook owns this contact (no crash chip)
     const dx = boss.x - car.x, dy = boss.y - car.y, d = Math.hypot(dx, dy) || 0.001;
     const minD = boss.radius + car.radius;
     if (d >= minD) return;
@@ -621,7 +963,7 @@ class ArenaGame {
       this.pairHits.set(key, this._t);
       const px = car.x + nx * car.radius, py = car.y + ny * car.radius;
       this.hurtBoss(px, py, (closing - 30) * 0.10, car); // plate takes the ram
-      this.hurtCar(car, (closing - 30) * 0.05, boss);     // you take a knock too
+      this.hurtCar(car, (closing - 30) * 0.05, boss, boss.x, boss.y, "crash"); // you take a knock too
       this.particles.sparks(px, py, Math.atan2(ny, nx), 8, 240);
       this.audio.playImpact(clamp(closing / 500, 0, 1));
     }
@@ -632,13 +974,13 @@ class ArenaGame {
   detonateMine(m, source) {
     m.dead = true;
     for (const car of this.cars()) {
-      if (this.isDeadCar(car)) continue;
+      if (this.isDeadCar(car) || car === m.owner) continue; // your own mine never hurts YOU
       const d = dist(m.x, m.y, car.x, car.y);
       if (d > 90 + car.radius * 0.5) continue;
       const f = clamp(1 - d / 140, 0.3, 1);
       const ang = Math.atan2(car.y - m.y, car.x - m.x);
       car.vx += Math.cos(ang) * 240 * f; car.vy += Math.sin(ang) * 240 * f;
-      this.hurtCar(car, m.dmg * f, source);
+      this.hurtCar(car, m.dmg * f, source, m.x, m.y, "mine");
     }
     if (this.boss && !this.boss.dead && dist(m.x, m.y, this.boss.x, this.boss.y) < 90 + this.boss.radius) {
       this.hurtBoss(m.x, m.y, m.dmg, source);
@@ -650,6 +992,8 @@ class ArenaGame {
   updateMines(dt) {
     for (const m of this.mines) {
       if (m.dead) continue;
+      m.age = (m.age || 0) + dt;
+      if (m.age > MINE_LIFE) { m.dead = true; continue; } // despawn — no lingering fields forever
       if (m.arm > 0) { m.arm -= dt; continue; }
       // the Titan trips mines too (any mine but its own — the boss has none)
       if (this.boss && !this.boss.dead && m.owner !== this.boss &&
@@ -666,7 +1010,7 @@ class ArenaGame {
         m.dead = true;
         const ang = Math.atan2(car.y - m.y, car.x - m.x);
         car.vx += Math.cos(ang) * 240; car.vy += Math.sin(ang) * 240; // knockback
-        this.hurtCar(car, m.dmg, m.owner);
+        this.hurtCar(car, m.dmg, m.owner, m.x, m.y, "mine");
         this.particles.explosion(m.x, m.y);
         this.audio.playExplosion();
         break;
@@ -676,8 +1020,15 @@ class ArenaGame {
   }
 
   // ARMOR reduces damage taken; hitting 0 HP wrecks the player.
-  damagePlayer(amount) {
+  damagePlayer(amount, hitX, hitY, srcType, source) {
     if (this.dead) return;
+    if (this._godmode) return; // TEST MODE (dev) — remove later
+    // RAM primary defense (user spec): while charging/ramming, frontal BULLETS
+    // do 0 damage and a frontal CRASH does 0 UNLESS the other car is ALSO a
+    // charging ram (mines always hurt); everything else is 35% off — ONLY when
+    // RAM is in the PRIMARY (weapon1) slot.
+    const ramPrimary = !!(this.loadout && this.loadout.weapon1 && this.loadout.weapon1.type === "ram");
+    amount *= ramDamageMul(this.player, ramPrimary, ramLaunchingFast(this.player, this.ramBoostT), hitX, hitY, srcType, source);
     this.outOfCombat = 0; // taking a hit resets the regen timer
     this.hp -= amount / (1 + this.partDmgReduce); // ARMOR part damage reduction
     if (this.hp <= 0) {
@@ -695,8 +1046,8 @@ class ArenaGame {
     }
   }
 
-  // death penalty (softened, user request): drop to 25% of your accumulated XP
-  // (you keep ~63% of your level) and re-earn from there. Your build resets —
+  // death penalty (user request): drop to 10% of your accumulated XP and
+  // re-earn from there. Your build resets —
   // stats to zero (with the reduced level's points to re-spend) + a fresh
   // common loadout of your original weapon.
   // the car the spectate camera follows — tracked by REFERENCE, so deaths of
@@ -716,23 +1067,29 @@ class ArenaGame {
     this.spectateCar = live[(live.indexOf(this.spectateCar) + 1) % live.length];
   }
 
-  respawnPlayer() {
+  // Respawn with a freshly CHOSEN weapon (the death flow re-opens the weapon
+  // picker — user request). A re-pick becomes your new default `baseWeapon`;
+  // omitting it keeps the last one.
+  respawnPlayer(weapon) {
     this.dead = false;
     this.spectate = false;
-    const kept = 0.25 * arenaTotalXp(this.level, this.xp);
+    const w = weapon || this.baseWeapon;
+    if (weapon) this.baseWeapon = weapon;               // the new pick sticks for next time
+    const kept = 0.10 * arenaTotalXp(this.level, this.xp); // keep 10% of total XP on death (user)
     const lv = arenaLevelFromTotal(kept, LEVEL_CAP);
     this.level = lv.level; this.xp = lv.xp;
     this.statPoints = this.level - 1;                   // points for your reduced level
     this.stats = { health: 0, speed: 0, reload: 0, regen: 0 };
     this.slots = { armor: this.level >= 5 };
-    this.startWeapon = this.baseWeapon;
-    this.loadout = this.freshLoadout(this.baseWeapon);
+    this.startWeapon = w;
+    this.loadout = this.freshLoadout(w);
     this.applyStats();
     this.hp = this.maxHp;
     this.outOfCombat = 0;
     const sp = this.playerSpawn();
     this.player.x = sp.x; this.player.y = sp.y;
     this.player.vx = this.player.vy = 0;
+    this.player.stunT = 0; // clear any leftover hook stun
     this.banner("RESPAWNED", "back to level " + this.level);
   }
 
@@ -869,6 +1226,7 @@ class ArenaGame {
     this.baseWeapon = this.startWeapon; // respawn reverts to your original pick
     this.loadout = this.freshLoadout(this.startWeapon); // build slots from the pick
     this.applyStats();
+    this.hp = this.maxHp; // spawn at FULL hp (the starting common armor bumps maxHp to 120)
     setSimRandom(() => this.rng.next()); // this mode owns the sim RNG while active
   }
 
@@ -877,9 +1235,11 @@ class ArenaGame {
     this.paused = !this.paused;
     document.getElementById("pause-screen").classList.toggle("hidden", !this.paused);
     if (this.paused) {
-      document.getElementById("guide-btn").classList.add("hidden"); // no Field Guide in Arena
+      document.getElementById("guide-btn").classList.add("hidden");        // the Gauntlet enemy guide
+      document.getElementById("arena-guide-btn").classList.remove("hidden"); // ...Arena has its own
     } else {
-      document.getElementById("options-screen").classList.add("hidden"); // clean up sub-menus
+      document.getElementById("options-screen").classList.add("hidden");   // clean up sub-menus
+      document.getElementById("arena-guide-screen").classList.add("hidden");
     }
     if (this.audio.ctx) this.paused ? this.audio.ctx.suspend() : this.audio.ctx.resume();
   }
@@ -906,6 +1266,7 @@ class ArenaGame {
       this.updateBots(dt);
       this.updateBossWorld(dt);
       this.updateCollisions(); // bots still crash into each other + the Titan
+      this.updateHooks(dt);    // bots keep hooking each other while you spectate
       this.updateProjectiles(dt);
       this.updateMines(dt);
       this.updateDrops(dt);
@@ -947,20 +1308,24 @@ class ArenaGame {
     if (p.y > ARENA.h - m)  { p.y = ARENA.h - m;  if (p.vy > 0) p.vy *= -0.4; }
     trackArenaMotion(p, dt); // bots lead their shots off these trackers
 
+    if (p.stunT > 0) p.stunT -= dt; // hooked → stunned (can't shoot); ticks down after the reel
+
     // weapon fire, then combat: bots think, Titan crawls, cars collide, shots resolve
     this.updateWeapon(dt);
+    this.updatePlayerHook(dt); // fire the minelayer hook (right-click / HOOK button)
     this.updateBots(dt);
     this.updateBossWorld(dt);
     this.updateCollisions();
+    this.updateHooks(dt);      // reel grabbed cars (final say on their position)
     this.updateProjectiles(dt);
     this.updateMines(dt);
     this.updateDrops(dt);
 
-    // first-encounter banner the first time you get near the Titan
-    if (this.boss && !this.boss.dead && !this._sawBoss &&
+    // first-encounter banner the first time you get near EACH boss type
+    if (this.boss && !this.boss.dead && !this._sawBossKinds[this.boss.kind] &&
         dist(p.x, p.y, this.boss.x, this.boss.y) < 1000) {
-      this._sawBoss = true;
-      this.banner("JUNK TITAN", "tear off its plates");
+      this._sawBossKinds[this.boss.kind] = true;
+      this.banner(this.boss.name, this.boss.tagline);
     }
 
     // XP from scrap: drive over a pile to absorb it (the other farm path).

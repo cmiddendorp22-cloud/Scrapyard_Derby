@@ -130,7 +130,10 @@ class ArenaRenderer {
     for (const d of g.drops || []) { if (onScreen(d.x, d.y, 20)) this.drawPartDrop(d, reach.has(d)); }
     // mines on the ground, then the Titan, then bullets + cars on top
     for (const m of g.mines || []) { if (onScreen(m.x, m.y, 20)) this.drawMine(m); }
-    if (g.boss && !g.boss.dead && onScreen(g.boss.x, g.boss.y, 140)) this.drawBoss(g.boss);
+    for (const h of g.hooks || []) this.drawHook(h); // grapple tethers
+    if (g.boss && !g.boss.dead && onScreen(g.boss.x, g.boss.y, MAGNET_PULL_R + 20)) {
+      if (g.boss.kind === "magnet") this.drawMagnet(g.boss); else this.drawBoss(g.boss);
+    }
     for (const b of g.bullets || []) { if (onScreen(b.x, b.y, 20)) this.drawBullet(b); }
     for (const bot of g.bots || []) { if (!bot.deadFlag && onScreen(bot.x, bot.y, 60)) this.drawBot(bot); }
 
@@ -197,11 +200,22 @@ class ArenaRenderer {
     const glyph = p.slot === "weapon" ? p.type[0].toUpperCase()
       : p.slot === "tires" ? "T" : p.slot === "engine" ? "E" : "A"; // T/E/W/A
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 250 + d.x);
+    // despawn blink: in its final ~8s a drop flickers, faster as it nears 0,
+    // so players see it's about to vanish (cosmetic — uses the render clock)
+    const life = (typeof DROP_DESPAWN !== "undefined" ? DROP_DESPAWN : 30);
+    const remain = life - (d.age || 0);
+    let blink = 1;
+    if (remain < 8) {
+      const urgency = Math.max(0, 1 - remain / 8);     // 0 → 1 as it dies
+      const freq = 6 + urgency * 26;                   // blink accelerates
+      blink = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(performance.now() / 1000 * freq));
+    }
     ctx.save();
+    ctx.globalAlpha = blink;
     if (inReach) { // halo showing it can be grabbed
-      ctx.strokeStyle = col; ctx.globalAlpha = 0.25 + 0.35 * pulse; ctx.lineWidth = 4;
+      ctx.strokeStyle = col; ctx.globalAlpha = blink * (0.25 + 0.35 * pulse); ctx.lineWidth = 4;
       ctx.beginPath(); ctx.arc(d.x, d.y, 18, 0, TAU); ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = blink;
     }
     ctx.strokeStyle = col; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(d.x, d.y, 13, 0, TAU); ctx.stroke();
@@ -212,6 +226,27 @@ class ArenaRenderer {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(glyph, d.x, d.y + 1);
     ctx.textBaseline = "alphabetic";
+    ctx.restore();
+  }
+
+  // the minelayer hook: a chain from the owner to the hook head (or the reeled
+  // car). Yours reads yellow; everyone else's red (matches bullets/mines).
+  drawHook(h) {
+    if (h.dead) return;
+    const ctx = this.ctx, o = h.owner;
+    const yours = o === this.arena.player;
+    ctx.save();
+    ctx.strokeStyle = yours ? "#ffd166" : "#ff5c5c";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([6, 4]); // chain look
+    ctx.beginPath();
+    ctx.moveTo(o.x + Math.cos(h.angle) * o.radius, o.y + Math.sin(h.angle) * o.radius);
+    ctx.lineTo(h.hx, h.hy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // hook head (a small claw)
+    ctx.fillStyle = yours ? "#ffd166" : "#ff5c5c";
+    ctx.beginPath(); ctx.arc(h.hx, h.hy, 5, 0, TAU); ctx.fill();
     ctx.restore();
   }
 
@@ -332,6 +367,83 @@ class ArenaRenderer {
     ctx.restore();
   }
 
+  // THE MAGNET: a roaming gravity well. A faint pull-field ring marks the
+  // danger zone; a bright ring COLLAPSES inward during the mega-pull telegraph;
+  // the core is dark + armored normally and glows bright cyan while OVERLOADED
+  // (its only vulnerable window). Red/blue poles read it as a magnet.
+  drawMagnet(boss) {
+    const ctx = this.ctx, R = boss.radius, now = performance.now();
+    const vul = boss.isVulnerable && boss.isVulnerable();
+    // pull-field ring + inward streaks (the zone everything is dragged into)
+    ctx.save();
+    const fp = 0.5 + 0.5 * Math.sin(now / 400);
+    ctx.strokeStyle = "rgba(150,120,255," + (0.07 + 0.06 * fp) + ")";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(boss.x, boss.y, MAGNET_PULL_R, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = "rgba(150,120,255,0.10)";
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * TAU + now / 4000;
+      const span = MAGNET_PULL_R - R - 20;
+      const r0 = R + 20 + ((now / 5 + i * 71) % span);
+      ctx.beginPath();
+      ctx.moveTo(boss.x + Math.cos(a) * r0, boss.y + Math.sin(a) * r0);
+      ctx.lineTo(boss.x + Math.cos(a) * (r0 + 26), boss.y + Math.sin(a) * (r0 + 26));
+      ctx.stroke();
+    }
+    ctx.restore();
+    // mega-pull telegraph: a bright ring collapsing toward the core
+    if (boss.megaWind > 0) {
+      const t = boss.megaWind / MAGNET_MEGA_WIND; // 1 → 0
+      ctx.save();
+      ctx.strokeStyle = "rgba(190,90,255," + (0.3 + 0.5 * (1 - t)) + ")";
+      ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.arc(boss.x, boss.y, R + (MAGNET_PULL_R - R) * t, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+    // body: dark metal disc + red/blue magnet poles (rotate with heading)
+    ctx.save();
+    ctx.translate(boss.x, boss.y);
+    ctx.rotate(boss.heading);
+    ctx.fillStyle = boss.hitFlash > 0 ? "#efe7d0" : "#3a3a42";
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
+    ctx.lineWidth = R * 0.34;
+    ctx.strokeStyle = "#c0392b";
+    ctx.beginPath(); ctx.arc(0, 0, R * 0.66, -1.25, -0.15); ctx.stroke(); // N pole
+    ctx.strokeStyle = "#2c6fb0";
+    ctx.beginPath(); ctx.arc(0, 0, R * 0.66, 0.15, 1.25); ctx.stroke();   // S pole
+    ctx.restore();
+    // core: dark/armored normally, BRIGHT cyan + pulsing while overloaded
+    ctx.save();
+    ctx.translate(boss.x, boss.y);
+    const pulse = 0.5 + 0.5 * Math.sin(now / (vul ? 90 : 220));
+    if (vul) {
+      ctx.fillStyle = "rgba(120,240,255," + (0.5 + 0.4 * pulse) + ")";
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.5, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#eaffff";
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.26, 0, TAU); ctx.fill();
+    } else {
+      ctx.fillStyle = "#1c1c22";
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.32, 0, TAU); ctx.fill();
+      ctx.fillStyle = "rgba(150,120,255," + (0.2 + 0.25 * pulse) + ")";
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.18, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+    // name + state + toughness bar above
+    const y = boss.y - R - 20, w = 96;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(boss.x - w / 2, y, w, 6);
+    ctx.fillStyle = vul ? "#4ad9e6" : "#8a6dff";
+    ctx.fillRect(boss.x - w / 2, y, w * boss.hpFrac(), 6);
+    ctx.font = "bold 13px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = vul ? "#8ff5ff" : "#b9a9ff";
+    ctx.fillText("THE MAGNET", boss.x, y - 5);
+    if (vul) { ctx.fillStyle = "#8ff5ff"; ctx.font = "bold 10px 'Segoe UI', sans-serif"; ctx.fillText("OVERLOADED", boss.x, y - 18); }
+    else if (boss.megaWind > 0) { ctx.fillStyle = "#e59bff"; ctx.font = "bold 10px 'Segoe UI', sans-serif"; ctx.fillText("CHARGING!", boss.x, y - 18); }
+    ctx.restore();
+  }
+
   // a bot: car body + hp bar + name tag; flashes white when hit
   drawBot(bot) {
     const ctx = this.ctx;
@@ -382,6 +494,12 @@ class ArenaRenderer {
       ctx.lineTo(L / 2, W / 2 + 2);
       ctx.closePath();
       ctx.fill();
+    } else if (weaponId === "shotgun") {
+      ctx.fillStyle = "#333b41"; // twin stubby barrels (side-by-side)
+      ctx.fillRect(L * 0.1, -W * 0.24 - 2.5, L / 2 - 4, 5);
+      ctx.fillRect(L * 0.1, W * 0.24 - 2.5, L / 2 - 4, 5);
+      ctx.fillStyle = "#5a4633"; // wooden stock hint at the breech
+      ctx.fillRect(L * 0.02, -W * 0.24 - 3.5, 6, W * 0.48 + 7);
     } else {
       ctx.fillStyle = "#333b41"; // cannon barrel
       ctx.fillRect(0, -2.5, L / 2 + 9, 5);
@@ -458,11 +576,11 @@ class ArenaRenderer {
       ctx.moveTo(mx, my - 5); ctx.lineTo(mx + 5, my); ctx.lineTo(mx, my + 5); ctx.lineTo(mx - 5, my);
       ctx.closePath(); ctx.fill(); ctx.stroke();
     }
-    // Titan marker (gold diamond — the central gravity well)
+    // boss marker (diamond) — gold Titan / purple Magnet
     const boss = this.arena.boss;
     if (boss && !boss.dead) {
       const bx = x0 + boss.x * sx, by = y0 + boss.y * sy;
-      ctx.fillStyle = "#ffd166";
+      ctx.fillStyle = boss.kind === "magnet" ? "#a98bff" : "#ffd166";
       ctx.beginPath();
       ctx.moveTo(bx, by - 5); ctx.lineTo(bx + 5, by); ctx.lineTo(bx, by + 5); ctx.lineTo(bx - 5, by);
       ctx.closePath(); ctx.fill();
@@ -485,17 +603,21 @@ class ArenaRenderer {
     if (dist(g.cam.x, g.cam.y, boss.x, boss.y) > 1200) return;
     // drops below the spectate button row when it's up
     const w = 320, h = 9, x = (WORLD.w - w) / 2, y = g.spectate ? 64 : 16;
+    const magnet = boss.kind === "magnet", vul = magnet && boss.isVulnerable && boss.isVulnerable();
     ctx.save();
     ctx.textAlign = "center";
-    ctx.fillStyle = "#ffd166";
+    ctx.fillStyle = magnet ? (vul ? "#8ff5ff" : "#b9a9ff") : "#ffd166";
     ctx.font = "bold 11px 'Segoe UI', sans-serif";
-    ctx.fillText("JUNK TITAN", WORLD.w / 2, y - 4);
+    let label = boss.name;
+    if (vul) label += "  —  OVERLOADED";
+    else if (magnet && boss.megaWind > 0) label += "  —  CHARGING!";
+    ctx.fillText(label, WORLD.w / 2, y - 4);
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     pathRoundRect(ctx, x - 2, y - 2, w + 4, h + 4, 4);
     ctx.fill();
     ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = "#e67e22";
+    ctx.fillStyle = magnet ? (vul ? "#4ad9e6" : "#8a6dff") : "#e67e22";
     ctx.fillRect(x, y, w * boss.hpFrac(), h);
     ctx.restore();
   }
@@ -570,39 +692,49 @@ class ArenaRenderer {
   // is the always-on readout.
   drawHud() {
     const g = this.arena, ctx = this.ctx;
-    const maxed = g.level >= LEVEL_CAP;
+    // while SPECTATING a bot, the top-left panel shows THAT bot's level + build
+    // (user request); otherwise it's your own. Spectating the boss/nothing → no panel.
+    const watched = (g.dead && g.spectate) ? g.spectateTarget() : null;
+    const bot = watched && watched !== g.boss && watched.stats ? watched : null;
+    if (g.dead && g.spectate && !bot) return; // boss / nobody to show a build for
+    const level = bot ? bot.level : g.level;
+    const hp = bot ? bot.hp : g.hp, maxHp = bot ? bot.maxHp : g.maxHp;
+    const s = bot ? bot.stats : g.stats;
+    const statPoints = bot ? (bot.statPoints || 0) : g.statPoints;
+    const maxed = level >= LEVEL_CAP;
+    const xpFrac = maxed ? 1 : (bot ? clamp(bot.xp / arenaXpToNext(bot.level), 0, 1) : clamp(g.xp / g.xpToNext(), 0, 1));
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     pathRoundRect(ctx, 16, 14, 210, 94, 8);
     ctx.fill();
     ctx.textAlign = "left";
-    ctx.fillStyle = "#ffd166";
+    ctx.fillStyle = bot ? "#ff8b7a" : "#ffd166"; // reddish tint when watching a bot (name is in the top-center SPECTATING label)
     ctx.font = "bold 18px 'Segoe UI', sans-serif";
-    ctx.fillText("LVL " + g.level + (maxed ? " (MAX)" : ""), 28, 38);
+    ctx.fillText("LVL " + level + (maxed ? " (MAX)" : ""), 28, 38);
     // hp bar (red)
     ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fillRect(28, 46, 186, 9);
     ctx.fillStyle = "#e74c3c";
-    ctx.fillRect(28, 46, 186 * clamp(g.hp / g.maxHp, 0, 1), 9);
+    ctx.fillRect(28, 46, 186 * clamp(hp / maxHp, 0, 1), 9);
     // xp bar (green)
-    const frac = maxed ? 1 : clamp(g.xp / g.xpToNext(), 0, 1);
     ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fillRect(28, 58, 186, 7);
     ctx.fillStyle = "#7bed9f";
-    ctx.fillRect(28, 58, 186 * frac, 7);
-    // stat build readout
+    ctx.fillRect(28, 58, 186 * xpFrac, 7);
+    // stat build readout (bots have no regen stat)
     ctx.font = "10px Consolas, monospace";
     ctx.fillStyle = "#c0b7a8";
-    const s = g.stats;
-    ctx.fillText("HP " + s.health + "   SPD " + s.speed + "   RLD " + s.reload + "   RGN " + s.regen, 28, 84);
-    if (g.statPoints > 0) {
+    let line = "HP " + s.health + "   SPD " + s.speed + "   RLD " + s.reload;
+    if (s.regen !== undefined) line += "   RGN " + s.regen;
+    ctx.fillText(line, 28, 84);
+    if (statPoints > 0) {
       ctx.fillStyle = "#ffd166";
-      ctx.fillText("+" + g.statPoints + " point" + (g.statPoints > 1 ? "s" : "") + " to spend", 28, 100);
+      ctx.fillText("+" + statPoints + " point" + (statPoints > 1 ? "s" : "") + " to spend", 28, 100);
     }
     ctx.restore();
 
-    // RAM: charge gauge (hold FIRE to wind up, release to launch)
-    if (g.hasRam()) {
+    // RAM: charge gauge (hold FIRE to wind up, release to launch) — alive player only
+    if (!g.dead && g.hasRam()) {
       const boosting = g.ramBoostT > 0;
       const val = boosting ? 1 : clamp(g.ramCharge, 0, 1);
       ctx.save();

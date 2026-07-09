@@ -7,7 +7,11 @@ class Input {
   constructor() {
     this.keys = new Set();
     this.mouseDown = false;
+    this.autoFire = false; // F toggles continuous fire (press once → keeps firing)
     window.addEventListener("keydown", (e) => {
+      // F is an AUTO-FIRE toggle (not hold-to-fire) — flip once per press,
+      // ignoring OS key-repeat while held
+      if (e.code === "KeyF" && !e.repeat) this.autoFire = !this.autoFire;
       this.keys.add(e.code);
       // stop arrows/space from scrolling the page
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
@@ -15,11 +19,18 @@ class Input {
       }
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
-    window.addEventListener("blur", () => { this.keys.clear(); this.mouseDown = false; });
-    // fire on left click — listen on the canvas so UI buttons don't trigger shots
+    window.addEventListener("blur", () => { this.keys.clear(); this.mouseDown = false; this.hookHeld = false; this.touchAbility1 = false; this.touchAbility2 = false; });
+    // fire on left click, HOOK on right click — listen on the canvas so UI
+    // buttons don't trigger shots
     const canvas = document.getElementById("game");
-    canvas.addEventListener("mousedown", (e) => { if (e.button === 0) this.mouseDown = true; });
-    window.addEventListener("mouseup", (e) => { if (e.button === 0) this.mouseDown = false; });
+    this.hookHeld = false; // right mouse → fire the minelayer hook (toward the cursor)
+    canvas.addEventListener("mousedown", (e) => { if (e.button === 0) this.mouseDown = true; else if (e.button === 2) this.hookHeld = true; });
+    window.addEventListener("mouseup", (e) => { if (e.button === 0) this.mouseDown = false; else if (e.button === 2) this.hookHeld = false; });
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault()); // no menu on right-click aim
+    // mouse position (client coords) for aim — the Arena maps this to a world
+    // direction so shots fire toward the cursor (within a forward cone)
+    this.mouseX = 0; this.mouseY = 0; this.hasMouse = false;
+    window.addEventListener("mousemove", (e) => { this.mouseX = e.clientX; this.mouseY = e.clientY; this.hasMouse = true; });
 
     // ---- virtual touch controls ----
     // joystick reports a desired WORLD direction + magnitude; Player.update
@@ -27,9 +38,13 @@ class Input {
     this.touch = { active: false, x: 0, y: 0, mag: 0 };
     this.touchFire = false;
     this.touchHandbrake = false;
+    this.touchAbility1 = false; // primary-slot ability button (HOOK/CHARGE, per loadout)
+    this.touchAbility2 = false; // secondary-slot ability button
     this.wireJoystick();
     this.wireHoldButton("touch-fire", (v) => { this.touchFire = v; });
     this.wireHoldButton("touch-drift", (v) => { this.touchHandbrake = v; });
+    this.wireHoldButton("touch-ability1", (v) => { this.touchAbility1 = v; });
+    this.wireHoldButton("touch-ability2", (v) => { this.touchAbility2 = v; });
   }
 
   wireJoystick() {
@@ -98,7 +113,11 @@ class Input {
            (this.down("KeyA") || this.down("ArrowLeft") ? -1 : 0);
   }
 
-  get fire() { return this.mouseDown || this.down("KeyF") || this.touchFire; }
+  // fire = holding left-click, the touch FIRE button, or F auto-fire toggled on.
+  // The Gauntlet uses this directly (single weapon); the Arena resolves finer
+  // primary/secondary + ability channels in ArenaGame from the raw signals
+  // (mouseDown, hookHeld, autoFire, touchFire, touchAbility1/2).
+  get fire() { return this.mouseDown || this.autoFire || this.touchFire; }
   // hold SPACE (or the DRIFT button) to yank the handbrake for a rapid turn
   get handbrake() { return this.down("Space") || this.touchHandbrake; }
   get restart() { return this.down("KeyR"); }

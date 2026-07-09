@@ -11,6 +11,16 @@ const BOT_NAMES = [
   "RUSTBUCKET", "SCRAP_KING", "V8_VANDAL", "DENTED", "OVERKILL", "JUNKJAW",
   "AXLE", "CRUSHER99", "MADMAX", "GRINDER", "TOWTRUCK", "BOLTS", "DIESEL",
   "WRENCH", "SHRAPNEL", "PISTON", "GUTTER", "HAULER_X", "REBAR", "SLAG",
+  "LUGNUT", "CARNAGE", "SMOKESTACK", "BACKFIRE", "TAILPIPE", "MUFFLER",
+  "DENTZILLA", "OILSLICK", "RATTLE", "CLUNKER", "SPARKPLUG", "GEARHEAD",
+  "ROADKILL", "FENDER", "CHASSIS", "TORQUE", "NITRO", "CAMSHAFT", "DRIVESHAFT",
+  "MANIFOLD", "BUCKSHOT", "WRECKER", "CRANKSHAFT", "IRONHIDE", "SCRAPPY",
+  "BONESAW", "HAMMERHEAD", "DUSTDEVIL", "GRIMEBALL", "TETANUS", "BRAKELINE",
+  "COILOVER", "SIDESWIPE", "T_BONE", "ROLLCAGE", "SKIDMARK", "RADIATOR",
+  "HUBCAP", "DEATHTRAP", "SLEDGE", "MAULER", "SCORCH", "RIVET", "GASKET",
+  "FLATBED", "JUNKYARD", "SALVAGE", "CORROSION", "GRAVEL", "BLOWOUT",
+  "TREADS", "SPINOUT", "RECKLESS", "DEMOLITION", "SCRAPHEAP", "GRUDGE",
+  "BATTERAM", "OVERDRIVE",
 ];
 
 const BOT_ENGAGE = 560;      // engages the PLAYER within this range
@@ -98,16 +108,58 @@ function arenaLevelFromTotal(total, cap) {
   return { level, xp };
 }
 
+// the frontal block only engages while the ram is actually RAMMING — i.e.
+// LAUNCHED (ramBoostT > 0) and MOVING fast (user spec: it blocks only while
+// moving, NOT while dug in winding up the charge).
+const RAM_BLOCK_SPEED = 60;
+function ramLaunchingFast(car, ramBoostT) {
+  return ramBoostT > 0 && Math.hypot(car.vx || 0, car.vy || 0) > RAM_BLOCK_SPEED;
+}
+
+// is this car a RAM actively ramming (launched + moving)? (uniform for player +
+// bots — the player car carries a mirrored `chargingRam` flag since its ram
+// state lives on ArenaGame; bots read their own weapon + launch/speed state)
+function isChargingRam(car) {
+  if (!car) return false;
+  if (car.chargingRam !== undefined) return car.chargingRam;   // player (mirrored)
+  return car.weapon === "ram" && ramLaunchingFast(car, car.ramBoostT); // bot
+}
+
+// RAM defensive bonus — ONLY when RAM is the car's PRIMARY weapon (user spec):
+// while actively RAMMING (launched + moving), a FRONTAL hit is shrugged —
+//   • BULLET → always zero (plow through gunfire)
+//   • CRASH  → zero UNLESS the OTHER car is ALSO a charging ram; a head-on
+//     charge-vs-charge DOES deal impact damage so ram duels resolve, but a ram
+//     plowing anything else (or a non-charging ram) takes nothing on the nose
+//   • MINE   → still hurts (mines are the counter to ram)
+// Everything else (rear/side, non-charging) is reduced 35% (general toughness).
+// hitX/hitY = where the hit came FROM; srcType = "bullet"|"mine"|"crash"|"slam";
+// source = the attacking car (for the charge-vs-charge crash check).
+function ramDamageMul(car, isPrimaryRam, charging, hitX, hitY, srcType, source) {
+  if (!isPrimaryRam) return 1;
+  const frontal = hitX !== undefined && hitY !== undefined &&
+    Math.abs(angleDiff(Math.atan2(hitY - car.y, hitX - car.x), car.heading)) < 1.2; // ~138° front arc
+  if (charging && frontal) {
+    if (srcType === "bullet") return 0;                       // frontal bullets bounce off
+    if (srcType === "crash") return isChargingRam(source) ? 0.65 : 0; // only a charging ram gets through
+  }
+  return 0.65; // 35% shrugged off otherwise
+}
+
 class ArenaBot extends Car {
-  constructor(x, y, weapon, level) {
+  constructor(x, y, weapon, level, name) {
     super(x, y, rand(0, TAU), { accel: BOT_BASE.accel, maxSpeed: BOT_BASE.maxSpeed, turnRate: 2.5, grip: 7, drag: 0.6 });
     this.weapon = weapon;
     this.level = level;
     this.xp = 0;
     this.statPoints = 0;                 // spent instantly (randomly) on level-up
     this.stats = { health: 0, speed: 0, reload: 0 }; // (durability removed — armor part covers it)
-    this.name = pick(BOT_NAMES);
+    // name is assigned without-replacement by ArenaGame.spawnBot (no two living
+    // bots share); the pick() fallback is for direct construction (tests)
+    this.name = name || pick(BOT_NAMES);
     this.fireTimer = rand(0.4, 1.4);
+    this.hookCd = rand(1, HOOK_CD); // minelayer hook cooldown (staggered so they don't all fire at once)
+    this.stunT = 0;                 // >0 = hooked/reeled → can't shoot (set by the hook)
     this.ramCharge = 0; this.ramBoostT = 0; this.ramLaunchStr = 1;
     this.lootChannel = 0;                // seconds spent sitting over a part drop
     this.hitFlash = 0;
@@ -130,7 +182,7 @@ class ArenaBot extends Car {
       ramSnapChance: rand(0.45, 0.8),              // odds a misalignment triggers a handbrake nose-cut
       aimErr: rand(0.02, 0.05),                    // per-shot aim scatter (~1-3°): marksmen vs sprayers
       lead: rand(0.8, 1.1),                        // lead multiplier around the SMART prediction (under/over-leaders)
-      fireArc: rand(1.7, 2.3),                     // will-shoot cone: patient shooters vs spray-and-pray
+      fireArc: rand(1.2, 1.6),                     // will-shoot cone (narrowed, user): only fire when reasonably lined up, not spraying sideways
       sticky: rand(0.75, 0.95),                    // target loyalty: duelists vs opportunists
       flipCdT: rand(0.8, 1.4),                     // wall U-turn cooldown (desyncs wall escapes)
       unstickDelay: rand(0.5, 1.1),                // how long pinned-on-wall before reversing out
@@ -192,9 +244,10 @@ class ArenaBot extends Car {
     const eng = L.engine ? 1 + 0.05 * (L.engine.tier + 1) : 1; // engine part → speed/accel
     this.maxSpeed = BOT_BASE.maxSpeed * spd * eng;
     this.engineAccel = BOT_BASE.accel * spd * eng;
-    const tt = L.tires ? L.tires.tier + 1 : 0;                 // tires part → grip/turn
+    const tt = L.tires ? L.tires.tier + 1 : 0;                 // tires part → grip/turn/handbrake
     this.grip = 7 + 1.0 * tt;
     this.turnRate = 2.5 + 0.08 * tt;
+    this.handbrakeBoost = 1.3 + 0.10 * tt;                     // sharper drift per tier (base 1.3)
     const at = L.armor ? L.armor.tier + 1 : 0;                 // armor part → HP + reduction
     const newMax = 80 + this.level * 20 + this.stats.health * 25 + 20 * at;
     const inc = newMax - (this.maxHp || newMax);
@@ -303,7 +356,35 @@ class ArenaBot extends Car {
     return [throttle, steer];
   }
 
+  // Look-ahead MINE avoidance (user request): project ~0.4s ahead and, for any
+  // HOSTILE mine near that point (my own mines ignored), blend steering away
+  // from it. Subtle (capped blend) so combat lines stay readable; skipped mid
+  // ram-launch (charges stay committed, same as wall avoidance).
+  avoidMines(throttle, steer, game) {
+    if (!game.mines || !game.mines.length) return [throttle, steer];
+    const look = 0.4;
+    const fx = this.x + this.vx * look, fy = this.y + this.vy * look;
+    const R = this.radius + 46; // clearance to keep around a live mine
+    let ax = 0, ay = 0, worst = 0;
+    for (const m of game.mines) {
+      if (m.dead || m.owner === this) continue; // never dodge my OWN mines
+      const d = dist(fx, fy, m.x, m.y);
+      if (d >= R) continue;
+      const q = (R - d) / R;
+      const dx = (fx - m.x) || 0.01, dy = (fy - m.y) || 0.01;
+      const inv = q / Math.hypot(dx, dy);
+      ax += dx * inv; ay += dy * inv; // push away from the mine
+      if (q > worst) worst = q;
+    }
+    if (worst <= 0) return [throttle, steer];
+    const err = angleDiff(Math.atan2(ay, ax), this.heading);
+    const w = Math.min(0.8, worst * 1.5);
+    steer = steer * (1 - w) + clamp(err * 2.6, -1, 1) * w;
+    return [throttle, steer];
+  }
+
   update(dt, game) {
+    if (this.stunT > 0) this.stunT -= dt; // hooked → stunned (can't shoot), ticks down after the reel
     if (this.grudgeT > 0) { this.grudgeT -= dt; if (this.grudgeT <= 0) this.grudge = null; }
     if (this.flipCd > 0) this.flipCd -= dt;
     if (this.boredT > 0) { this.boredT -= dt; if (this.boredT <= 0) this.boredOf = null; }
@@ -344,6 +425,22 @@ class ArenaBot extends Car {
     }
     const engaged = target !== null;
     const aim = engaged ? angleDiff(Math.atan2(target.y - this.y, target.x - this.x), this.heading) : 0;
+    // MAGNET awareness (user picks): against the Magnet, bots hold at the pull's
+    // EDGE (out of the crush) and only truly threaten it during its OVERLOAD
+    // window — normal weapons bounce off its armor otherwise. Minelayers still
+    // feed mines into the pull anytime (mines are its weakness).
+    const magnetTarget = engaged && target === game.boss && target.kind === "magnet";
+    const magnetVuln = magnetTarget && target.isVulnerable && target.isVulnerable();
+    // minelayer bots HOOK a car into their minefield (user: bots too). Fires in
+    // the target's direction independent of the nose; gated by range + cooldown.
+    if (this.hookCd > 0) this.hookCd -= dt;
+    // hook a car (drag it into your field) OR the central boss (drag YOURSELF in)
+    if (this.weapon === "minelayer" && engaged && this.hookCd <= 0 && td < HOOK_MAX_LEN && this.stunT <= 0) {
+      // LEAD the hook at where the target will be (same predictor as their shots,
+      // with the hook's tier-scaled travel speed) so it lands on a moving car
+      const hp = arenaAimPoint(this, target, game.hookSpeedOf(this), this.persona.lead);
+      if (game.fireHook(this, Math.atan2(hp.y - this.y, hp.x - this.x))) this.hookCd = game.hookCooldown(this.stats.reload);
+    }
 
     // duel clock: time spent fighting THIS opponent (drives escalation) + time
     // engaged without landing damage (drives the standoff-breaker dive)
@@ -410,7 +507,10 @@ class ArenaBot extends Car {
     } else if (engaged) {
       this.lastFocus = target;
       this.lootChannel = 0; // combat first — getting engaged aborts any pickup
-      if (this.weapon === "ram") {
+      // a RAM vs a non-vulnerable Magnet doesn't charge into the crush — it
+      // falls through to the ring-orbit (holds at the pull's edge) and only
+      // commits its charge once the Magnet OVERLOADS
+      if (this.weapon === "ram" && !(magnetTarget && !magnetVuln)) {
         // ram: INTERCEPT — chase where the target will be, not where it is.
         // Two rams steering at each other's current position circle forever
         // (each stays ~90° off the other's nose, so the charge never arms);
@@ -461,7 +561,12 @@ class ArenaBot extends Car {
         const tight = Math.max(0.35, 1 - Math.max(0, this.fightT - P.escalateT) * P.escalateRate);
         const cur = Math.atan2(this.y - target.y, this.x - target.x); // my angle on the ring
         const ahead = cur + this.orbitDir * (0.55 + P.orbitBias);     // a personal step ahead
-        const ring = P.orbitRange * tight + (target.radius || 0);     // surface distance (Titan-safe)
+        // ring distance: normally the persona orbit (Titan-safe). Vs the MAGNET,
+        // hold near the PULL'S EDGE (out of the crush) — a bit inside the radius
+        // for weapon range but well clear of the strong inner pull.
+        const ring = magnetTarget
+          ? MAGNET_PULL_R * (0.82 + P.orbitBias * 0.1)
+          : P.orbitRange * tight + (target.radius || 0);
         const m = ARENA.wall + 110; // safe margin — derives from ARENA, resize-proof
         const gx = clamp(target.x + Math.cos(ahead) * ring, m, ARENA.w - m);
         const gy = clamp(target.y + Math.sin(ahead) * ring, m, ARENA.h - m);
@@ -488,6 +593,10 @@ class ArenaBot extends Car {
       // fire across a wide arc (shots lead + auto-aim, so the nose need not be
       // dead-on) — the arc width is a persona roll: patient vs spray-and-pray
       wantFire = this.weapon !== "ram" && Math.abs(aim) < P.fireArc;
+      // vs the MAGNET: gun bots BAIT the overload (hold fire until it's
+      // vulnerable — shots just bounce otherwise), but minelayers keep feeding
+      // mines into the pull anytime (mines bypass its armor — its weakness)
+      if (magnetTarget && !magnetVuln && this.weapon !== "minelayer") wantFire = false;
     } else {
       this.offNoseT = 0;
       // loot: an uncontested part UPGRADE in range beats farming
@@ -537,12 +646,17 @@ class ArenaBot extends Car {
     // ram boost (before integrate); other weapons fire after. The charge arms
     // off the INTERCEPT aim — nose on the predicted position = launch. No
     // wind-ups while walking away from a given-up loop.
-    if (this.weapon === "ram") this.updateRam(dt, engaged && !escaping, ramAim);
+    // don't wind up a charge while merely holding at a non-vulnerable Magnet's
+    // edge — the ram waits for the overload before committing
+    const ramEngaged = engaged && !escaping && !(magnetTarget && !magnetVuln) && this.stunT <= 0;
+    if (this.weapon === "ram") this.updateRam(dt, ramEngaged, ramAim);
     else this.boost = 1;
+    this.chargingRam = this.weapon === "ram" && ramLaunchingFast(this, this.ramBoostT); // launched + moving → frontal-crash checks
 
     // --- wall handling (all behaviors) ---
     const ramLaunching = this.weapon === "ram" && this.ramBoostT > 0;
     if (!ramLaunching) [throttle, steer] = this.applyWallAvoidance(throttle, steer);
+    if (!ramLaunching) [throttle, steer] = this.avoidMines(throttle, steer, game);
     // wedge recovery: pinned near a wall + barely moving → REVERSE out (a car
     // can't steer at zero speed, so driving forward can never recover). Only
     // near a wall, so mid-arena parking/orbiting never triggers a phantom back-out.
@@ -567,7 +681,7 @@ class ArenaBot extends Car {
 
     // ranged weapons fire toward the current target (RELOAD shortens the interval)
     this.fireTimer -= dt;
-    if (wantFire && target && this.fireTimer <= 0 && this.weapon !== "ram") {
+    if (wantFire && target && this.fireTimer <= 0 && this.weapon !== "ram" && this.stunT <= 0) { // stunned → can't shoot
       // acceleration-aware lead (arenaAimPoint — the Gauntlet gunner's model):
       // distance sets flight time, along-track accel + typical-speed regression
       // set the travel. persona.lead scales it (under/over-leaders) and every
@@ -580,10 +694,26 @@ class ArenaBot extends Car {
         b.shooter = this; // kill attribution
         game.bullets.push(b);
         game.audio.playEnemyShoot();
+      } else if (this.weapon === "shotgun") {
+        // close-range pellet spread — only fire when actually close (this is a
+        // short-reach weapon); otherwise hold and keep closing the distance
+        if (td < 340) {
+          this.fireTimer = 0.9 / this.reloadMul();
+          const pellets = 6, spread = 0.20;
+          for (let i = 0; i < pellets; i++) {
+            const pang = ang + (i / (pellets - 1) - 0.5) * 2 * spread;
+            const pb = new Bullet(this.x + Math.cos(pang) * 24, this.y + Math.sin(pang) * 24, pang, 620, false, (7 + this.level) * this.weaponMul());
+            pb.life = 0.34; pb.radius = 3;
+            pb.strength = 0.35; // weak pellets — a normal cannon bullet breaks ~3
+            pb.shooter = this;
+            game.bullets.push(pb);
+          }
+          game.audio.playEnemyShoot();
+        } else this.fireTimer = 0.12; // re-check soon, don't waste the volley at range
       } else if (this.weapon === "minelayer") {
         this.fireTimer = 1.6 / this.reloadMul();
         const f = this.forward;
-        game.mines.push({ x: this.x - f.x * 26, y: this.y - f.y * 26, owner: this, arm: 1.0, dmg: (12 + this.level) * this.weaponMul(), dead: false });
+        game.mines.push({ x: this.x - f.x * 26, y: this.y - f.y * 26, owner: this, arm: 1.0, age: 0, dmg: game.mineDamageOf(this), dead: false });
       }
     }
     if (this.hitFlash > 0) this.hitFlash -= dt;
@@ -626,8 +756,12 @@ class ArenaBot extends Car {
     } else { this.ramCharge = Math.max(0, this.ramCharge - dt); this.boost = 1; }
   }
 
-  hurt(amount) {
-    this.hp -= amount / (1 + (this.partDmgReduce || 0)); // DURABILITY stat + ARMOR part
+  hurt(amount, hitX, hitY, srcType, source) {
+    // RAM primary defense (bots carry a single weapon, so this.weapon === "ram"
+    // IS their primary). A fully-shrugged hit still registers a grudge below
+    // (the bot reacts to being shot at even when it tanks the damage).
+    amount *= ramDamageMul(this, this.weapon === "ram", ramLaunchingFast(this, this.ramBoostT), hitX, hitY, srcType, source);
+    this.hp -= amount / (1 + (this.partDmgReduce || 0)); // ARMOR part reduction
     this.hitFlash = 0.12;
     // remember the attacker (hurtCar sets lastHitBy just before calling us) —
     // retaliation: they jump the targeting queue for a few seconds
