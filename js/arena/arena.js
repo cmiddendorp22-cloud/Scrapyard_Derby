@@ -29,7 +29,7 @@ const PICKUP_RANGE = 180;         // a ground part within this range is "collect
 const DROP_DESPAWN = 30;          // seconds a dropped part lingers before vanishing
 const MINE_LIFE = 20;             // seconds a mine sits before it despawns
 const DROP_CAP = 40;              // max ground parts before the oldest is culled
-const AIM_CONE = 0.6;            // player mouse-aim: shots swivel up to ~34° off the nose (a small forward radius)
+const AIM_CONE = Math.PI;        // player mouse-aim: full 360° — shots fire straight at the cursor (user)
 // -- minelayer HOOK (drag a car into your minefield) --
 const HOOK_MAX_LEN = 375;        // reach / leash length — SAME at every tier (user)
 // hook extend speed scales slightly with the minelayer tier (user): slow at low
@@ -160,6 +160,15 @@ class ArenaGame {
   // the Titan (which sits at the map's middle)
   playerSpawn() { return { x: ARENA.w / 2, y: ARENA.h / 2 + 820 }; }
 
+  // reference level that bot spawns scale to. Single-player = your level; this
+  // is the MULTIPLAYER hook — when there are multiple human players, fold in all
+  // their levels here (avg/max) so bots track the whole lobby, not one player.
+  lobbyLevel() {
+    // TODO(multiplayer): return avg (or max) of every human player's level.
+    // Example for later: const ls = this.players.map(p => p.level); return Math.round(ls.reduce((a,b)=>a+b,0)/ls.length);
+    return this.level;
+  }
+
   // spawn one bot at a random spot away from the player
   spawnBot() {
     let x, y, tries = 0;
@@ -168,7 +177,7 @@ class ArenaGame {
       y = rand(ARENA.wall + 100, ARENA.h - ARENA.wall - 100);
     } while (dist(x, y, this.player.x, this.player.y) < 700 && tries++ < 20);
     const weapon = pick(["cannon", "cannon", "ram", "minelayer", "shotgun"]); // cannon-weighted
-    const level = randInt(1, Math.max(1, this.level + 2)); // scale with the player
+    const level = randInt(1, Math.max(1, this.lobbyLevel() + 2)); // scale with the lobby
     this.bots.push(new ArenaBot(x, y, weapon, level, this.uniqueBotName()));
   }
 
@@ -1039,7 +1048,7 @@ class ArenaGame {
       this.bumpStreak(killer);              // your killer's streak grows
       this.playerStreak = 0;                // yours resets on death
       if (killer && killer.gainXp) this.nemesis = killer; // a BOT becomes your nemesis
-      if (this.loadout.weapon1) this.dropPart(this.player.x, this.player.y, this.loadout.weapon1); // scatter your gun
+      this.dropPart(this.player.x, this.player.y, this.playerDeathDrop()); // drop ONE part, weighted to your best (user)
       this.particles.explosion(this.player.x, this.player.y);
       if (this.audio.playGameOver) this.audio.playGameOver();
       this.banner("WRECKED", "");
@@ -1094,6 +1103,19 @@ class ArenaGame {
   }
 
   // -- part loot: wrecks drop parts; equip them from the loadout panel --------
+
+  // on PLAYER death, drop ONE equipped part chosen at random but WEIGHTED toward
+  // the highest tier — same weighting bots use in pickDrop (user).
+  playerDeathDrop() {
+    const L = this.loadout;
+    const parts = [L.tires, L.engine, L.weapon1, L.weapon2, L.armor].filter(Boolean);
+    if (!parts.length) return null;
+    let total = 0; for (const p of parts) total += (p.tier + 1) * (p.tier + 1);
+    let r = rand(0, total);
+    for (const p of parts) { r -= (p.tier + 1) * (p.tier + 1); if (r <= 0) return { slot: p.slot, type: p.type, tier: p.tier, cd: 0 }; }
+    const last = parts[parts.length - 1];
+    return { slot: last.slot, type: last.type, tier: last.tier, cd: 0 };
+  }
 
   dropPart(x, y, part) {
     if (!part) return;

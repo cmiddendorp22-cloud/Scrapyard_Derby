@@ -137,7 +137,15 @@ class ArenaRenderer {
     for (const b of g.bullets || []) { if (onScreen(b.x, b.y, 20)) this.drawBullet(b); }
     for (const bot of g.bots || []) { if (!bot.deadFlag && onScreen(bot.x, bot.y, 60)) this.drawBot(bot); }
 
-    if (!g.dead) this.drawCar(g.player, "#3f88c5"); // hidden while wrecked
+    if (!g.dead) {
+      this.drawCar(g.player, "#3f88c5"); // hidden while wrecked
+      // HP bar above your car, same as the bots' (green = yours)
+      const p = g.player, hy = p.y - p.radius - 13, hw = 40;
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(p.x - hw / 2, hy, hw, 5);
+      ctx.fillStyle = "#5fd35f";
+      ctx.fillRect(p.x - hw / 2, hy, hw * clamp(g.hp / g.maxHp, 0, 1), 5);
+    }
     if (g.particles) g.particles.draw(ctx); // level-up + combat bursts (world space)
     ctx.restore();
 

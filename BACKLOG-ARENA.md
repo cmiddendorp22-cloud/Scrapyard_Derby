@@ -57,6 +57,14 @@ protecting your own). Nothing else in the genre does this — it's the hook.
   already spawns ground debris on death — make it functional). Drive over a
   part to bolt it into a matching slot; swapping drops your old part for
   someone else to grab. Fresh wrecks = contested hotspots (feeds convergence).
+  Player death drops ONE part weighted to your best tier (done 2026-07-09).
+- **BACKLOG — MAP LOOT SPAWNING (user idea request):** loot that spawns AROUND
+  the map, not just from wrecks — so exploring/roaming pays off. Leading idea:
+  destructible LOOT CRATES — a few scattered crates you shoot/ram open for a
+  part (tier scaled to `lobbyLevel`, small chance of higher). Alternatives:
+  ambient ground-part spawns; a periodic loot-cache event (ties into the
+  roaming scrap-storm idea, item 6). Decide crate vs ambient vs event + spawn
+  rate/tiers when building.
 - **Part durability = dismemberment combat:** looted parts use the existing
   component-HP model. Shoot a specific part off an enemy (their cannon → now
   defenseless; their engine → now stalling) and it can be re-looted. Chain of
@@ -277,6 +285,17 @@ Nearest effective target wins; Titan-swarm/loot/farm unchanged below combat.
 NOT yet: distinct per-weapon bot AI, mine HOOK.
 
 (AI chase-dodge / evasive-when-chased was dropped from the backlog per user.)
+
+**BACKLOG — MINELAYER BOTS FEEL NEWER / MISS MORE (user):** make minelayer-armed
+bots read as less-skilled drivers than the rest — they should MISS more shots
+(wider aim scatter / more under-lead on the cannon-farm shots + hook) and drive
+more clumsily (sloppier lines, over/under-steer, later brake-to-turn, more
+wall-wandering, slower reactions). Idea: give the minelayer weapon its own
+worse persona band (bump `aimErr`, cut `lead`, loosen `throttleMul`/steering,
+add a reaction delay) so a minelayer bot is noticeably rookie-ish vs a
+cannon/ram bot. Keep it seeded-deterministic (per the standing randomness
+rule). Tune so they're still a threat with the mines/hook, just visibly greener
+at aiming and driving.
 
 **✅ bigger bot NAME pool DONE (2026-07-08):** `BOT_NAMES` expanded ~20 → ~78,
 and `ArenaGame.uniqueBotName` draws WITHOUT REPLACEMENT (a name no living bot is
@@ -506,6 +525,22 @@ identical states never mirror into loops). See changelog 2026-07-07.
       (platform rule). Visible growth: equipped looted parts render on the car
       (per-part geometry already supports this) — the agar.io "watch myself
       grow" dopamine.
+    - **BACKLOG — DIFFERENT SCREEN SIZES NEED TO BE HANDLED (user):** the game
+      must look right across the range of viewports, not just the two we test
+      (1600×900 desktop / 844×390 landscape phone). Cover: tall/narrow and very
+      wide/ultrawide aspect ratios, tiny phones and big tablets, high-DPI, and
+      live window resizing. Audit that HUD/overlays/virtual-control anchors, the
+      letterbox scaling, and font/hit-target sizes hold up (no overlap,
+      clipping, or off-screen elements) at the extremes. Screenshot-test several
+      sizes.
+    - **BACKLOG — UI SIZE + REPOSITION IN SETTINGS (user):** let players
+      customize the HUD from the options/settings menu — a UI SCALE slider
+      (global or per-element) and the ability to MOVE elements around (drag /
+      reposition the HP bar, minimap, leaderboard, stat panel, and the
+      touch joystick/FIRE/ability/pause buttons). Persist the layout in
+      localStorage. Needs a small anchoring/layout system so custom positions
+      survive resizes + the different screen sizes above. Big on mobile where
+      thumb reach + button size vary a lot per device.
 
 12. **Monetization hooks (mode-specific)**
     - Rewarded ad → starting-XP head-start (the death-reset is the natural ad

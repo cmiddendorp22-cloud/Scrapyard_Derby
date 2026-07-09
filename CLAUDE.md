@@ -483,6 +483,23 @@ cascade bug that text-only testing never would.
   base kill) + full regression + desktop & mobile screenshots green. NOT yet:
   bots hunting the bounty (they don't read the board); global cross-session
   board (waits on accounts).
+- **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
+  style as the bots' (`drawCar` for the player, then a bar above it in the
+  world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-09** — PARTS/loadout panel opens on entering an Arena run (user):
+  `loadoutOpen = true` set in `chooseWeapon` (+ the `?weapon=` preview + test
+  mode); still toggleable with PARTS / L.
+- **2026-07-09** — Player shooting is now 360° (user): `AIM_CONE` 0.6 rad →
+  180° → 205° → `Math.PI` (full circle) — shots fire STRAIGHT at the cursor in
+  any direction (the clamp is now a no-op; shots + hook aim identically).
+- **2026-07-09** — Player-death drop + multiplayer level hook (user). PLAYER
+  DEATH now drops ONE equipped part chosen at random, WEIGHTED toward the
+  highest tier (weight `(tier+1)²`, same as bots' `pickDrop`) via
+  `playerDeathDrop()` — was: always dropped `weapon1`. Bot-spawn level scaling
+  now goes through `lobbyLevel()` (returns `this.level` today; the documented
+  MULTIPLAYER hook to fold in all human players' levels — avg/max — later).
+  Gated by arena-level-test.js (weighted-to-best drop). Map/box loot spawning
+  still an open idea (see BACKLOG-ARENA).
 - **2026-07-09** — Hook speed + reach are now FLAT at every tier (user): dropped
   the per-tier `HOOK_SPEED_MIN/MAX` for a single `HOOK_SPEED` 1270 (the old
   uncommon value); `HOOK_MAX_LEN` 375 for all tiers. Only mine/hook DAMAGE still

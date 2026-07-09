@@ -73,6 +73,7 @@
       active = arena;
       arena.begin();
       setGod(false);
+      loadoutOpen = true; lastLoadoutSig = ""; // open the PARTS panel on entry
       panel.classList.remove("hidden");
     });
     const spawnSet = (tier) => { // a full ring of parts (every slot + weapon) at one tier
@@ -161,6 +162,7 @@
     arena.startWeapon = id; // INITIAL flow: begin a fresh run
     active = arena;
     arena.begin();
+    loadoutOpen = true; lastLoadoutSig = ""; // open the PARTS panel on entering the game (user)
   }
   function backToStart() {
     document.getElementById("weapon-select").classList.add("hidden");
@@ -537,7 +539,7 @@
     if (params.get("mode") === "arena") { // preview Arena: weapon picker, or
       document.getElementById("start-screen").classList.add("hidden");
       const w = params.get("weapon");
-      if (w) { arena.startWeapon = w; active = arena; arena.begin(); } // ...straight to play
+      if (w) { arena.startWeapon = w; active = arena; arena.begin(); loadoutOpen = true; lastLoadoutSig = ""; } // ...straight to play
       else { buildWeaponSelect(); document.getElementById("weapon-select").classList.remove("hidden"); }
       const xp = parseInt(params.get("xp"), 10);
       if (active === arena && Number.isFinite(xp)) arena.addXp(xp); // preview leveled state
