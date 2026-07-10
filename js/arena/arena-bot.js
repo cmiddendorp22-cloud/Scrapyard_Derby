@@ -852,7 +852,7 @@ class ArenaBot extends Car {
           const pellets = 6, spread = 0.20;
           for (let i = 0; i < pellets; i++) {
             const pang = ang + (i / (pellets - 1) - 0.5) * 2 * spread;
-            const pb = new Bullet(this.x + Math.cos(pang) * 24, this.y + Math.sin(pang) * 24, pang, 620, false, (7 + this.level) * this.weaponMul());
+            const pb = new Bullet(this.x + Math.cos(pang) * 24, this.y + Math.sin(pang) * 24, pang, 620, false, (17.5 + 2.5 * this.level) * this.weaponMul()); // 2.5x (user)
             pb.life = 0.34; pb.radius = 3;
             pb.strength = 0.35; // weak pellets — a normal cannon bullet breaks ~3
             pb.shooter = this;

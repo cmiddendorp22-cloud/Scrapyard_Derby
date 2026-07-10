@@ -48,9 +48,16 @@ handleOrientation()/begin() and share one Input + AudioSys. `readDrive()` in
 input.js is the shared keyboard/joystick→car-controls helper both use.
 
 Load order matters (classic scripts, see index.html):
-`utils → rng → input → audio → particles → projectile → scrap → car →
+`theme → utils → rng → input → audio → particles → projectile → scrap → car →
 player → enemy → waves → render → ui → upgrades → game →
 arena/arena-render → arena/arena → main`
+
+- `js/theme.js` — THE color palette (`THEME`): single source for UI chrome +
+  gameplay-identity colors. Canvas code reads `THEME.*` directly; at load it
+  injects every entry as a CSS variable (`--kebab-case`) so style.css uses
+  `var(--accent)` etc. Retheme the game by editing this one file. Sprite/art
+  tones (crate wood, boss hulls, wheel rust, floor) are deliberately NOT
+  themed. Gauntlet canvas (render.js/ui.js) not yet converted (mode disabled).
 
 - `js/utils.js` — math helpers, `WORLD`, `pathRoundRect`; SIM rng helpers
   `rand/randInt/pick` (routed via `setSimRandom`) + COSMETIC `fxRand/fxPick`
@@ -486,6 +493,86 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-10** — Center-banner QUEUE (user: too many popups). Only ONE
+  center banner shows at a time (`banners[0]`); new ones queue behind it.
+  The active banner stays `BANNER_FULL` 3s when nothing waits, yields after
+  `BANNER_MIN` 1s when the queue is backed up (queued banners start fresh —
+  only the active one ages). LEVEL-UP banners are tagged (`kind: "level"`)
+  and DEDUPE in the queue — fast leveling shows only the newest "LEVEL N"
+  (the active banner is never cut). Queue capped at 6 waiting (oldest queued
+  dropped) so a chaotic fight can't build stale backlog. `drawBanners`
+  renders just the head with fade tied to its current stay time. Also added
+  backlog item: POTENTIAL ITEM SET COMBINATIONS (set bonuses for matching
+  parts). Gated by arena-level-test.js (3s solo, 1s yield + fresh start +
+  FIFO order + drain, level dedupe keeps newest, active never deduped).
+- **2026-07-10** — COLOR THEME system (user: no hardcoded UI colors). New
+  `js/theme.js` loaded FIRST: a semantic `THEME` object (accent/text/danger/
+  success/info/warn + gameplay identity: player/playerShot/enemy/botCar/boss/
+  overload/tier colors) that canvas code reads directly AND self-injects as
+  CSS variables (`--accent` etc.) so style.css shares it via `var()`. ~88 CSS
+  + ~60 canvas replacements; `ARENA_TIERS` colors now reference THEME; the
+  crosshair default color derives from `themeRGB(THEME.playerShot)`.
+  CONSOLIDATION merges (user-approved, all near-identical): dim golds
+  #a58a3d→#c9a227; borders #4c4238→#5a5148; deep bgs #17130f→#15130f; shop
+  green #3c8f66→success; gray #777→textFaint; nemesis reds #ff5b4d/#ff3b30→
+  enemy #ff5c5c; row text #d8cfc0→text #e8e2d6. NOT themed (by design):
+  sprite/art tones (crate wood, boss hulls, wheels, floor, telegraph rgba
+  effects) + the dormant Gauntlet canvas renderer (its DOM menus themed via
+  shared CSS). Harnesses parse index.html script tags, so theme.js flowed
+  into tests automatically. Screenshots pixel-identical pre/post; full
+  regression green.
+- **2026-07-10** — Shotgun 2.5x damage + red OFF chip (user). Player pellets
+  9 → 22.5 x tier (a full 6-pellet point-blank volley ~135+ before armor);
+  bot pellets (7+lvl) → (17.5+2.5·lvl), both x weaponMul. The crosshair
+  picker's OFF chip (slashed circle) now always draws BRIGHT RED (#e0301e)
+  regardless of the chosen crosshair color (`chipColor(style)` special-case).
+- **2026-07-10** — Reload arc scoped to ABILITIES + arc toggle + slower blink
+  + red OFF pills (user, 4 asks). (1) The crosshair's reload arc now shows
+  ONLY deliberate long cooldowns: the railgun's reload and the minelayer's
+  HOOK (`xhairCooldownFrac` reads `hookCd`/`hookCooldown`); cannon/shotgun/
+  mines/ram show NO arc (`w.cdMax` removed — unused). (2) RELOAD INDICATOR
+  toggle in Options (`#xhair-arc-btn`, persisted `sd_xhair_arc`) hides the
+  arc entirely; the reload color-dim stays. (3) Despawn blink slowed AGAIN
+  (user: still too fast): freq now 1→3 rad/s (6s → 2s breathing periods),
+  alpha floor 0.45. (4) Option pill toggles generalized `#fullscreen-btn` →
+  `button.option-toggle` (specificity-matched to beat `.overlay button`):
+  OFF = BRIGHT RED (user), ON = green — fullscreen + reload-indicator both.
+  Short-phone media block compacted further (6 options rows + BACK now fit
+  390px). Desktop + mobile screenshots green.
+- **2026-07-10** — Crosshair OFF + RGB color + calmer despawn blink (user, 3
+  asks). (1) DESPAWN BLINK slowed way down: a dying ground part now pulses
+  gently (`drawPartDrop` freq 6→32 rad/s reduced to 2→7, alpha floor 0.3 →
+  0.35) — the old flicker was overwhelming. (2) Crosshair OFF: a 5th
+  slashed-circle chip in the picker disables the reticle AND keeps the OS
+  cursor visible (`updateCursor` gates on style !== "off"); the default stays
+  the classic cross. (3) CROSSHAIR COLOR: an RGB slider row (R/G/B 0-255,
+  per-channel accent colors + a live swatch) — the reticle, its reload-dim
+  state (55% of the chosen color), and the preview chips all follow it;
+  persisted as `sd_xhair_color`. Short-phone media block compacted so the
+  taller options menu fits 390px (BACK was clipping). Desktop + mobile
+  screenshots green.
+- **2026-07-10** — Custom CROSSHAIR + options picker (user Q&A; closes the
+  backlog item). The OS cursor is hidden while actually playing Arena
+  (`updateCursor` in the rAF loop: only alive + unpaused; menus/death get it
+  back) and replaced by a canvas reticle at the cursor
+  (`ArenaRenderer.drawCrosshair`, drawn last in the HUD pass; desktop only —
+  touch has no cursor). FOUR STYLES via the shared `drawCrosshairShape`
+  (cross / dot / ring / chevrons, all dark-outlined for readability) + a
+  RELOAD SWEEP: an arc closes around the reticle while the equipped weapon is
+  on cooldown (railgun `railCd`, spammables via the new `w.cdMax` stored at
+  fire time), the reticle dims while reloading and flashes white for 160ms
+  when ready. OPTIONS MENU: a CROSSHAIR row of live canvas preview chips
+  (gold border = active) + a SIZE slider (60-180%), both persisted
+  (`sd_xhair_style`/`sd_xhair_size`), applied live via
+  `arena.renderer.xhair`. All chip DOM calls stub-guarded (headless boot).
+  Preview `?mode=arena&xhair` (fakes a cursor for screenshots). Platform gap
+  (by design): no crosshair on touch — shots aim out the nose there.
+- **2026-07-10** — BACKLOG-ARENA.md PRUNED (user): completed items deleted
+  from the backlog (history lives in this changelog); stale text fixed
+  (dual-slot references, old railgun charge description, removed durability
+  stat); now a 30-item open list grouped gameplay / AI / world / meta / UI /
+  big-lifts. RULE going forward: when an Arena item ships, DELETE it from
+  BACKLOG-ARENA.md instead of marking it done.
 - **2026-07-10** — Railgun damage halved (user): `RAIL_DMG` 195 → 97.5 (a
   full-tier-scaled slug two-shots most cars instead of one-shotting rookies;
   speed/reload/pierce unchanged).

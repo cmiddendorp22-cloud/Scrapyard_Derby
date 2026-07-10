@@ -542,6 +542,104 @@
     reflectFullscreen();
   }
 
+  // -- CROSSHAIR options (user): style chips (incl. OFF) + size slider + RGB
+  // color sliders, persisted. The renderer reads arena.renderer.xhair each
+  // frame; changes apply live. ------------------------------------------------
+  const XHAIR_STYLES = ["cross", "dot", "ring", "chev", "off"];
+  (function initCrosshairOptions() {
+    const chips = document.getElementById("xhair-chips");
+    const slider = document.getElementById("xhair-size");
+    const sizeLabel = document.getElementById("xhair-size-value");
+    if (!chips || !slider) return; // stub DOM (headless tests)
+    const xh = arena.renderer.xhair;
+    try {
+      const st = localStorage.getItem("sd_xhair_style");
+      if (st && XHAIR_STYLES.includes(st)) xh.style = st;
+      const sz = parseInt(localStorage.getItem("sd_xhair_size"), 10);
+      if (Number.isFinite(sz) && sz >= 60 && sz <= 180) { xh.size = sz / 100; slider.value = sz; }
+      const colStr = localStorage.getItem("sd_xhair_color");
+      if (colStr) {
+        const [r, g, b] = colStr.split(",").map((v) => clamp(parseInt(v, 10) || 0, 0, 255));
+        xh.color = { r, g, b };
+      }
+    } catch (_) { /* storage unavailable */ }
+    if (sizeLabel) sizeLabel.textContent = slider.value + "%";
+    const chipEls = [], chipCtxs = [];
+    const chipColor = (style) => style === "off" ? THEME.dangerBright // OFF chip: always bright red (user)
+      : "rgb(" + xh.color.r + "," + xh.color.g + "," + xh.color.b + ")";
+    const redrawChips = () => {
+      for (let i = 0; i < chipCtxs.length; i++) {
+        const cctx = chipCtxs[i];
+        if (!cctx) continue;
+        cctx.clearRect(0, 0, 44, 44);
+        drawCrosshairShape(cctx, 22, 22, XHAIR_STYLES[i], 1.15, chipColor(XHAIR_STYLES[i]));
+      }
+    };
+    for (const style of XHAIR_STYLES) {
+      const cv = document.createElement("canvas");
+      if (!cv) continue; // stub DOM (headless tests)
+      cv.width = 44; cv.height = 44;
+      cv.className = "xhair-chip" + (style === xh.style ? " active" : "");
+      const cctx = cv.getContext && cv.getContext("2d");
+      chipCtxs.push(cctx || null);
+      if (cctx) drawCrosshairShape(cctx, 22, 22, style, 1.15, chipColor(style));
+      if (cv.addEventListener) cv.addEventListener("click", () => {
+        xh.style = style;
+        try { localStorage.setItem("sd_xhair_style", style); } catch (_) {}
+        for (const el of chipEls) if (el.classList && el.classList.toggle) el.classList.toggle("active", el === cv);
+      });
+      if (chips.appendChild) chips.appendChild(cv);
+      chipEls.push(cv);
+    }
+    if (slider.addEventListener) slider.addEventListener("input", () => {
+      if (sizeLabel) sizeLabel.textContent = slider.value + "%";
+      xh.size = slider.value / 100;
+      try { localStorage.setItem("sd_xhair_size", slider.value); } catch (_) {}
+    });
+    // RGB color sliders + live swatch; the chips redraw in the chosen color
+    const rEl = document.getElementById("xhair-r"), gEl = document.getElementById("xhair-g"), bEl = document.getElementById("xhair-b");
+    const swatch = document.getElementById("xhair-swatch");
+    if (rEl && gEl && bEl) {
+      rEl.value = xh.color.r; gEl.value = xh.color.g; bEl.value = xh.color.b;
+      const applyColor = () => {
+        xh.color = { r: parseInt(rEl.value, 10), g: parseInt(gEl.value, 10), b: parseInt(bEl.value, 10) };
+        if (swatch && swatch.style) swatch.style.background = chipColor();
+        redrawChips();
+        try { localStorage.setItem("sd_xhair_color", xh.color.r + "," + xh.color.g + "," + xh.color.b); } catch (_) {}
+      };
+      for (const el of [rEl, gEl, bEl]) if (el.addEventListener) el.addEventListener("input", applyColor);
+      if (swatch && swatch.style) swatch.style.background = chipColor();
+    }
+    // RELOAD INDICATOR toggle: shows/hides the crosshair's cooldown arc
+    const arcBtn = document.getElementById("xhair-arc-btn");
+    if (arcBtn) {
+      try { xh.arc = localStorage.getItem("sd_xhair_arc") !== "0"; } catch (_) {}
+      const reflectArc = () => {
+        arcBtn.textContent = xh.arc ? "ON" : "OFF";
+        if (arcBtn.classList && arcBtn.classList.toggle) arcBtn.classList.toggle("on", xh.arc);
+      };
+      if (arcBtn.addEventListener) arcBtn.addEventListener("click", () => {
+        xh.arc = !xh.arc;
+        try { localStorage.setItem("sd_xhair_arc", xh.arc ? "1" : "0"); } catch (_) {}
+        reflectArc();
+      });
+      reflectArc();
+    }
+  })();
+
+  // hide the OS cursor over the canvas while actually PLAYING Arena (the
+  // custom crosshair replaces it); menus/death/pause — or crosshair OFF —
+  // get the cursor back
+  let cursorHidden = false;
+  function updateCursor() {
+    const hide = active === arena && arena.started && !arena.dead && !arena.paused &&
+      arena.renderer.xhair.style !== "off";
+    if (hide !== cursorHidden) {
+      cursorHidden = hide;
+      canvas.style.cursor = hide ? "none" : "";
+    }
+  }
+
   window.addEventListener("keydown", (e) => {
     if (e.code === "Escape") {
       // ESC backs out of the top-most overlay, then unpauses the active mode
@@ -622,6 +720,11 @@
         arena.startWeapon = "railgun";
         arena.applyStats();
         if (params.has("reloading")) arena.railCd = 1.9; // show the on-car reload state (mid-refill) for screenshots
+      }
+      if (params.has("xhair") && active === arena) { // preview the crosshair (fake a cursor position)
+        arena.input.hasMouse = true;
+        arena.input.mouseX = Math.round(window.innerWidth * 0.60);
+        arena.input.mouseY = Math.round(window.innerHeight * 0.38);
       }
       if (params.has("crate") && active === arena && arena.crates.length) { // pull a crate into view
         const c = arena.crates[0];
@@ -728,8 +831,10 @@
       while (acc >= STEP) { active.update(STEP); acc -= STEP; }
       active.renderer.draw();
       if (active === arena) { updateArenaStatsUI(); updateLoadoutPanel(); updateDeathUI(); updateAbilityButtons(); } // level-ups / loot / death / ability buttons
+      updateCursor(); // OS cursor hidden only while actually playing Arena
     } else {
       acc = 0; // on the menu nothing simulates; don't bank time to burst later
+      updateCursor();
     }
     requestAnimationFrame(loop);
   }

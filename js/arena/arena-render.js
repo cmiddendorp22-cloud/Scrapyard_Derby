@@ -6,6 +6,47 @@
 // then screen-space HUD + minimap. `ARENA` lives in arena.js.
 // ---------------------------------------------------------------------------
 
+// draw one crosshair shape at (x, y) — shared by the in-game reticle and the
+// options-menu preview chips. `s` scales it; all strokes get a dark outline
+// pass first so the reticle reads on any floor.
+function drawCrosshairShape(ctx, x, y, style, s, color) {
+  const passes = [["rgba(20,16,12,0.85)", 4], [color, 2]];
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const [col, lw] of passes) {
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = lw;
+    if (style === "dot") {
+      ctx.beginPath(); ctx.arc(x, y, (lw === 4 ? 3.6 : 2.6) * s, 0, TAU); ctx.fill();
+    } else if (style === "ring") {
+      ctx.beginPath(); ctx.arc(x, y, 7.5 * s, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, (lw === 4 ? 2.4 : 1.6) * s, 0, TAU); ctx.fill();
+    } else if (style === "off") { // picker chip only: slashed circle = crosshair disabled
+      ctx.beginPath(); ctx.arc(x, y, 8 * s, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 5.5 * s, y + 5.5 * s); ctx.lineTo(x + 5.5 * s, y - 5.5 * s); ctx.stroke();
+    } else if (style === "chev") { // four inward arrows, hollow center
+      for (let i = 0; i < 4; i++) {
+        const a = -Math.PI / 2 + i * (Math.PI / 2); // up/right/down/left
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const tipX = x + ca * 4.5 * s, tipY = y + sa * 4.5 * s;   // arrow tip (inward)
+        const bx = x + ca * 10 * s, by = y + sa * 10 * s;         // arrow base
+        const px = -sa * 3.5 * s, py = ca * 3.5 * s;              // perpendicular spread
+        ctx.beginPath();
+        ctx.moveTo(bx + px, by + py); ctx.lineTo(tipX, tipY); ctx.lineTo(bx - px, by - py);
+        ctx.stroke();
+      }
+    } else { // "cross": four gap ticks + a center dot
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        ctx.beginPath();
+        ctx.moveTo(x + dx * 4.5 * s, y + dy * 4.5 * s);
+        ctx.lineTo(x + dx * 11 * s, y + dy * 11 * s);
+        ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(x, y, (lw === 4 ? 2.2 : 1.4) * s, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 class ArenaRenderer {
   constructor(canvas, arena) {
     this.canvas = canvas;
@@ -14,6 +55,12 @@ class ArenaRenderer {
     this.tile = this.makeTile();
     this.pattern = null; // built lazily from a live ctx
     this.skids = [];     // {x1,y1,x2,y2,age} rubber segments (same system as Gauntlet)
+    // crosshair preference (style + size + RGB color + reload-arc toggle;
+    // style "off" disables) — set by main.js from localStorage, changed live
+    // from the options menu
+    this.xhair = { style: "cross", size: 1, color: themeRGB(THEME.playerShot), arc: true };
+    this._xhairPrevFrac = 0;
+    this._xhairReadyAt = 0;
   }
 
   resetMarks() { this.skids = []; }
@@ -141,12 +188,12 @@ class ArenaRenderer {
     for (const bot of g.bots || []) { if (!bot.deadFlag && onScreen(bot.x, bot.y, 60)) this.drawBot(bot); }
 
     if (!g.dead) {
-      this.drawCar(g.player, "#3f88c5"); // hidden while wrecked
+      this.drawCar(g.player, THEME.player); // hidden while wrecked
       // HP bar above your car, same as the bots' (green = yours)
       const p = g.player, hy = p.y - p.radius - 13, hw = 40;
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.fillRect(p.x - hw / 2, hy, hw, 5);
-      ctx.fillStyle = "#5fd35f";
+      ctx.fillStyle = THEME.heal;
       ctx.fillRect(p.x - hw / 2, hy, hw * clamp(g.hp / g.maxHp, 0, 1), 5);
     }
     if (g.particles) g.particles.draw(ctx); // level-up + combat bursts (world space)
@@ -160,6 +207,56 @@ class ArenaRenderer {
     this.drawHud();
     this.drawBanners();
     if (g.dead) this.drawDeathOverlay();
+    this.drawCrosshair(); // on top of everything (the OS cursor is hidden in-game)
+  }
+
+  // how far through its cooldown the weapon's DELIBERATE action is (0 = ready)
+  // — feeds the crosshair's reload sweep. Only long cooldowns show (user):
+  // the railgun's reload and the minelayer's HOOK ability. Spammables
+  // (cannon/shotgun/mines) and the ram (it has the CHARGE gauge) show nothing.
+  xhairCooldownFrac() {
+    const g = this.arena;
+    if (g.hasRailgun()) return g.railCd > 0 ? clamp(g.railCd / RAIL_CD, 0, 1) : 0;
+    if (g.hasMinelayer()) return g.hookCd > 0 ? clamp(g.hookCd / g.hookCooldown(g.stats.reload), 0, 1) : 0;
+    return 0;
+  }
+
+  // custom CROSSHAIR at the cursor (user): style + size from the options menu,
+  // with a RELOAD SWEEP arc while the weapon is on cooldown and a brief white
+  // flash the moment it's ready. Desktop only (touch has no cursor); cosmetic
+  // (render clock) — never touches the sim.
+  drawCrosshair() {
+    const g = this.arena, inp = g.input;
+    if (this.xhair.style === "off") return; // disabled (the OS cursor stays visible)
+    if (!g.started || g.dead || g.touchMode || !inp || !inp.hasMouse) return;
+    if (!this.canvas.getBoundingClientRect) return; // headless
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const lx = ((inp.mouseX - rect.left) / rect.width) * VIEW.w;
+    const ly = ((inp.mouseY - rect.top) / rect.height) * VIEW.h;
+    if (lx < 0 || ly < 0 || lx > VIEW.w || ly > VIEW.h) return; // cursor off the canvas
+    const frac = this.xhairCooldownFrac();
+    const now = performance.now();
+    if (this._xhairPrevFrac > 0 && frac === 0) this._xhairReadyAt = now; // just finished
+    this._xhairPrevFrac = frac;
+    const flash = now - this._xhairReadyAt < 160;
+    const c = this.xhair.color || themeRGB(THEME.playerShot);
+    const col = frac > 0 // dimmed version of the chosen color while reloading
+      ? "rgb(" + Math.round(c.r * 0.55) + "," + Math.round(c.g * 0.55) + "," + Math.round(c.b * 0.55) + ")"
+      : flash ? THEME.flash : "rgb(" + c.r + "," + c.g + "," + c.b + ")";
+    const s = this.xhair.size || 1;
+    drawCrosshairShape(this.ctx, lx, ly, this.xhair.style, s, col);
+    if (frac > 0 && this.xhair.arc !== false) { // reload sweep (optional): the arc closes as the ability comes back up
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,150,90,0.9)";
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(lx, ly, 14 * s, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - frac));
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   drawDeathOverlay() {
@@ -170,7 +267,7 @@ class ArenaRenderer {
       // clean view — just a small "who am I watching" tag under the spectate buttons
       const t = g.spectateTarget();
       const name = !t ? "" : t === g.boss ? "JUNK TITAN" : t.name + "  L" + t.level;
-      ctx.fillStyle = "#ffd166";
+      ctx.fillStyle = THEME.accent;
       ctx.font = "bold 16px 'Segoe UI', sans-serif";
       ctx.fillText("SPECTATING" + (name ? ":  " + name : ""), VIEW.w / 2, 86);
       ctx.restore();
@@ -186,7 +283,7 @@ class ArenaRenderer {
     const ctx = this.ctx;
     // From the local player's POV: your own shots are yellow, everyone else's
     // (bots, boss — and other humans once there's netcode) read as red danger.
-    const col = b.shooter === this.arena.player ? "#ffe066" : "#ff5c5c";
+    const col = b.shooter === this.arena.player ? THEME.playerShot : THEME.enemy;
     ctx.save();
     if (b.railgun) { // piercing slug: a long bright lance with a white-hot core
       ctx.strokeStyle = col;
@@ -197,7 +294,7 @@ class ArenaRenderer {
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#ffffff";
+      ctx.strokeStyle = THEME.flash;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(b.x - b.vx * 0.04, b.y - b.vy * 0.04);
@@ -236,8 +333,8 @@ class ArenaRenderer {
     let blink = 1;
     if (remain < 8) {
       const urgency = Math.max(0, 1 - remain / 8);     // 0 → 1 as it dies
-      const freq = 6 + urgency * 26;                   // blink accelerates
-      blink = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(performance.now() / 1000 * freq));
+      const freq = 1 + urgency * 2;                    // SLOW breathing fade, 6s → 2s periods (user x2: keep it calm)
+      blink = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(performance.now() / 1000 * freq));
     }
     ctx.save();
     ctx.globalAlpha = blink;
@@ -265,7 +362,7 @@ class ArenaRenderer {
     const ctx = this.ctx, o = h.owner;
     const yours = o === this.arena.player;
     ctx.save();
-    ctx.strokeStyle = yours ? "#ffd166" : "#ff5c5c";
+    ctx.strokeStyle = yours ? THEME.accent : THEME.enemy;
     ctx.lineWidth = 2.5;
     ctx.setLineDash([6, 4]); // chain look
     ctx.beginPath();
@@ -274,7 +371,7 @@ class ArenaRenderer {
     ctx.stroke();
     ctx.setLineDash([]);
     // hook head (a small claw)
-    ctx.fillStyle = yours ? "#ffd166" : "#ff5c5c";
+    ctx.fillStyle = yours ? THEME.accent : THEME.enemy;
     ctx.beginPath(); ctx.arc(h.hx, h.hy, 5, 0, TAU); ctx.fill();
     ctx.restore();
   }
@@ -287,11 +384,11 @@ class ArenaRenderer {
     ctx.beginPath();
     ctx.arc(m.x, m.y, 7, 0, TAU);
     ctx.fill();
-    ctx.strokeStyle = yours ? "#3d3d3d" : "#ff5c5c";
+    ctx.strokeStyle = yours ? "#3d3d3d" : THEME.enemy;
     ctx.lineWidth = 2;
     ctx.stroke();
     const on = Math.sin(performance.now() / 150) > 0; // armed blink
-    if (m.arm <= 0) ctx.fillStyle = yours ? (on ? "#ffd166" : "#5c4512") : (on ? "#ff3b30" : "#5c1512");
+    if (m.arm <= 0) ctx.fillStyle = yours ? (on ? THEME.accent : "#5c4512") : (on ? THEME.enemy : "#5c1512");
     else ctx.fillStyle = yours ? "#8a6d1f" : "#a33a33";
     ctx.beginPath();
     ctx.arc(m.x, m.y, 2.5, 0, TAU);
@@ -336,7 +433,7 @@ class ArenaRenderer {
     ctx.lineWidth = 2.5;
     pathRoundRect(ctx, -r, -r, r * 2, r * 2, 3);
     ctx.stroke();
-    ctx.fillStyle = "#ffd166";                            // gold latch = "loot!"
+    ctx.fillStyle = THEME.accent;                            // gold latch = "loot!"
     ctx.fillRect(-3, -3, 6, 6);
     if (hurt) {                                           // splinter cracks
       ctx.strokeStyle = "#2e2312";
@@ -448,7 +545,7 @@ class ArenaRenderer {
       if (pl.dead) continue;
       ctx.save();
       ctx.rotate(pl.ang);
-      ctx.fillStyle = pl.hit > 0 ? "#ffffff" : "#6e5a3c";
+      ctx.fillStyle = pl.hit > 0 ? THEME.flash : "#6e5a3c";
       ctx.strokeStyle = "#2a231b"; ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(0, 0, R, -0.6, 0.6);
@@ -465,11 +562,11 @@ class ArenaRenderer {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(boss.x - w / 2, y, w, 6);
-    ctx.fillStyle = "#e67e22";
+    ctx.fillStyle = THEME.warn;
     ctx.fillRect(boss.x - w / 2, y, w * boss.hpFrac(), 6);
     ctx.font = "bold 13px 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillStyle = "#ffd166";
+    ctx.fillStyle = THEME.accent;
     ctx.fillText("JUNK TITAN", boss.x, y - 5);
     ctx.restore();
   }
@@ -540,13 +637,13 @@ class ArenaRenderer {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(boss.x - w / 2, y, w, 6);
-    ctx.fillStyle = vul ? "#4ad9e6" : "#8a6dff";
+    ctx.fillStyle = vul ? THEME.overload : THEME.boss;
     ctx.fillRect(boss.x - w / 2, y, w * boss.hpFrac(), 6);
     ctx.font = "bold 13px 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillStyle = vul ? "#8ff5ff" : "#b9a9ff";
+    ctx.fillStyle = vul ? THEME.infoBright : THEME.bossSoft;
     ctx.fillText("THE MAGNET", boss.x, y - 5);
-    if (vul) { ctx.fillStyle = "#8ff5ff"; ctx.font = "bold 10px 'Segoe UI', sans-serif"; ctx.fillText("OVERLOADED", boss.x, y - 18); }
+    if (vul) { ctx.fillStyle = THEME.infoBright; ctx.font = "bold 10px 'Segoe UI', sans-serif"; ctx.fillText("OVERLOADED", boss.x, y - 18); }
     else if (boss.megaWind > 0) { ctx.fillStyle = "#e59bff"; ctx.font = "bold 10px 'Segoe UI', sans-serif"; ctx.fillText("CHARGING!", boss.x, y - 18); }
     ctx.restore();
   }
@@ -554,12 +651,12 @@ class ArenaRenderer {
   // a bot: car body + hp bar + name tag; flashes white when hit
   drawBot(bot) {
     const ctx = this.ctx;
-    this.drawCar(bot, bot.hitFlash > 0 ? "#ffffff" : "#c0503a", bot.weapon);
+    this.drawCar(bot, bot.hitFlash > 0 ? THEME.flash : THEME.botCar, bot.weapon);
     // looting: gold progress ring while it channels a part pickup (drive in
     // close to contest it — proximity aborts the claim)
     if (bot.lootChannel > 0) {
       ctx.save();
-      ctx.strokeStyle = "#ffd166";
+      ctx.strokeStyle = THEME.accent;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(bot.x, bot.y, bot.radius + 7, -Math.PI / 2,
@@ -570,15 +667,15 @@ class ArenaRenderer {
     const y = bot.y - bot.radius - 13, w = 40;
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(bot.x - w / 2, y, w, 5);
-    ctx.fillStyle = "#e74c3c";
+    ctx.fillStyle = THEME.danger;
     ctx.fillRect(bot.x - w / 2, y, w * clamp(bot.hp / bot.maxHp, 0, 1), 5);
     ctx.font = "bold 11px 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
     const isNemesis = this.arena.nemesis === bot;
-    ctx.fillStyle = isNemesis ? "#ff5b4d" : "#e8e2d6";
+    ctx.fillStyle = isNemesis ? THEME.enemy : THEME.text;
     ctx.fillText(bot.name + " L" + bot.level, bot.x, y - 4);
     if (isNemesis) {
-      ctx.fillStyle = "#ff5b4d";
+      ctx.fillStyle = THEME.enemy;
       ctx.font = "bold 10px 'Segoe UI', sans-serif";
       ctx.fillText("NEMESIS", bot.x, y - 16);
     }
@@ -614,7 +711,7 @@ class ArenaRenderer {
       const reloading = st ? st.reload : 0;
       ctx.fillStyle = "#2b3a4d"; // extra-long thin rail barrel
       ctx.fillRect(-L * 0.1, -1.8, L + 4, 3.6);
-      ctx.fillStyle = reloading > 0 ? "#7a3a30" : "#57b8ff"; // spent red vs ready cyan
+      ctx.fillStyle = reloading > 0 ? "#7a3a30" : THEME.info; // spent red vs ready cyan
       ctx.fillRect(L * 0.18, -3, 3, 6);
       ctx.fillRect(L * 0.42, -3, 3, 6);
       ctx.fillStyle = "#1d1d1f"; // muzzle brake
@@ -642,7 +739,7 @@ class ArenaRenderer {
       ctx.fillRect(sx - 5, -W / 2 - 3, 10, 6);
       ctx.fillRect(sx - 5, W / 2 - 3, 10, 6);
     }
-    ctx.fillStyle = "#3f88c5"; // player blue — matches the car you'll drive
+    ctx.fillStyle = THEME.player; // player blue — matches the car you'll drive
     pathRoundRect(ctx, -L / 2, -W / 2, L, W, 6);
     ctx.fill();
     ctx.fillStyle = "rgba(200,230,255,0.75)";
@@ -683,7 +780,7 @@ class ArenaRenderer {
       ctx.strokeRect(x0 + cx * cw * sx, y0 + cy * ch * sy, cw * sx, ch * sy);
     }
     // bot dots (red)
-    ctx.fillStyle = "#e74c3c";
+    ctx.fillStyle = THEME.danger;
     for (const bot of this.arena.bots || []) {
       if (bot.deadFlag) continue;
       ctx.beginPath();
@@ -694,7 +791,7 @@ class ArenaRenderer {
     const nem = this.arena.nemesis;
     if (nem && !nem.deadFlag) {
       const mx = x0 + nem.x * sx, my = y0 + nem.y * sy;
-      ctx.fillStyle = "#ff3b30"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+      ctx.fillStyle = THEME.enemy; ctx.strokeStyle = THEME.flash; ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(mx, my - 5); ctx.lineTo(mx + 5, my); ctx.lineTo(mx, my + 5); ctx.lineTo(mx - 5, my);
       ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -703,13 +800,13 @@ class ArenaRenderer {
     const boss = this.arena.boss;
     if (boss && !boss.dead) {
       const bx = x0 + boss.x * sx, by = y0 + boss.y * sy;
-      ctx.fillStyle = boss.kind === "magnet" ? "#a98bff" : "#ffd166";
+      ctx.fillStyle = boss.kind === "magnet" ? "#a98bff" : THEME.accent;
       ctx.beginPath();
       ctx.moveTo(bx, by - 5); ctx.lineTo(bx + 5, by); ctx.lineTo(bx, by + 5); ctx.lineTo(bx - 5, by);
       ctx.closePath(); ctx.fill();
     }
     // player dot
-    ctx.fillStyle = "#3f88c5";
+    ctx.fillStyle = THEME.player;
     ctx.beginPath();
     ctx.arc(x0 + p.x * sx, y0 + p.y * sy, 3.5, 0, TAU);
     ctx.fill();
@@ -729,7 +826,7 @@ class ArenaRenderer {
     const magnet = boss.kind === "magnet", vul = magnet && boss.isVulnerable && boss.isVulnerable();
     ctx.save();
     ctx.textAlign = "center";
-    ctx.fillStyle = magnet ? (vul ? "#8ff5ff" : "#b9a9ff") : "#ffd166";
+    ctx.fillStyle = magnet ? (vul ? THEME.infoBright : THEME.bossSoft) : THEME.accent;
     ctx.font = "bold 11px 'Segoe UI', sans-serif";
     let label = boss.name;
     if (vul) label += "  —  OVERLOADED";
@@ -740,7 +837,7 @@ class ArenaRenderer {
     ctx.fill();
     ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = magnet ? (vul ? "#4ad9e6" : "#8a6dff") : "#e67e22";
+    ctx.fillStyle = magnet ? (vul ? THEME.overload : THEME.boss) : THEME.warn;
     ctx.fillRect(x, y, w * boss.hpFrac(), h);
     ctx.restore();
   }
@@ -762,7 +859,7 @@ class ArenaRenderer {
     ctx.fill();
     ctx.strokeStyle = "rgba(201,162,39,0.5)"; ctx.lineWidth = 1; ctx.stroke();
     ctx.textAlign = "left";
-    ctx.fillStyle = "#ffd166";
+    ctx.fillStyle = THEME.accent;
     ctx.font = "bold 10px 'Segoe UI', sans-serif";
     ctx.fillText("LEADERBOARD", x0 + 8, top + 12);
     ctx.font = "11px 'Segoe UI', sans-serif";
@@ -770,7 +867,7 @@ class ArenaRenderer {
       const e = lb[i], ry = top + headH + i * rowH, isLeader = e.car === g.leaderCar;
       if (isLeader) { ctx.fillStyle = "rgba(255,209,102,0.18)"; ctx.fillRect(x0 + 3, ry, S - 6, rowH); }
       const y = ry + 11;
-      ctx.fillStyle = isLeader ? "#ffd166" : (e.isPlayer ? "#7bd3ff" : "#d8cfc0");
+      ctx.fillStyle = isLeader ? THEME.accent : (e.isPlayer ? THEME.playerBright : THEME.text);
       ctx.textAlign = "left";
       const nm = e.name.length > 12 ? e.name.slice(0, 11) + "…" : e.name;
       ctx.fillText((isLeader ? "★ " : (i + 1) + ". ") + nm, x0 + 8, y);
@@ -803,7 +900,7 @@ class ArenaRenderer {
       const y = topY + i * lh;
       ctx.fillStyle = "rgba(0,0,0,0.6)";
       ctx.fillText(e.text, rightX + 1, y + 1);          // shadow
-      ctx.fillStyle = e.streak ? "#ffd166" : (e.you ? "#7bd3ff" : "#d8cfc0");
+      ctx.fillStyle = e.streak ? THEME.accent : (e.you ? THEME.playerBright : THEME.text);
       ctx.fillText(e.text, rightX, y);
     }
     ctx.globalAlpha = 1;
@@ -831,18 +928,18 @@ class ArenaRenderer {
     pathRoundRect(ctx, 16, 14, 210, 94, 8);
     ctx.fill();
     ctx.textAlign = "left";
-    ctx.fillStyle = bot ? "#ff8b7a" : "#ffd166"; // reddish tint when watching a bot (name is in the top-center SPECTATING label)
+    ctx.fillStyle = bot ? "#ff8b7a" : THEME.accent; // reddish tint when watching a bot (name is in the top-center SPECTATING label)
     ctx.font = "bold 18px 'Segoe UI', sans-serif";
     ctx.fillText("LVL " + level + (maxed ? " (MAX)" : ""), 28, 38);
     // hp bar (red)
     ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fillRect(28, 46, 186, 9);
-    ctx.fillStyle = "#e74c3c";
+    ctx.fillStyle = THEME.danger;
     ctx.fillRect(28, 46, 186 * clamp(hp / maxHp, 0, 1), 9);
     // xp bar (green)
     ctx.fillStyle = "rgba(255,255,255,0.12)";
     ctx.fillRect(28, 58, 186, 7);
-    ctx.fillStyle = "#7bed9f";
+    ctx.fillStyle = THEME.xp;
     ctx.fillRect(28, 58, 186 * xpFrac, 7);
     // WHEEL health mini-diagram (dismemberment readout — user): a nose-up car
     // chip in the panel's top-right, one pip per wheel colored by its health
@@ -869,12 +966,12 @@ class ArenaRenderer {
     }
     // stat build readout (bots have no regen stat)
     ctx.font = "10px Consolas, monospace";
-    ctx.fillStyle = "#c0b7a8";
+    ctx.fillStyle = THEME.textDim;
     let line = "HP " + s.health + "   SPD " + s.speed + "   RLD " + s.reload;
     if (s.regen !== undefined) line += "   RGN " + s.regen;
     ctx.fillText(line, 28, 84);
     if (statPoints > 0) {
-      ctx.fillStyle = "#ffd166";
+      ctx.fillStyle = THEME.accent;
       ctx.fillText("+" + statPoints + " point" + (statPoints > 1 ? "s" : "") + " to spend", 28, 100);
     }
     ctx.restore();
@@ -887,13 +984,13 @@ class ArenaRenderer {
       ctx.fillStyle = "rgba(0,0,0,0.45)";
       pathRoundRect(ctx, 16, 114, 210, 26, 8);
       ctx.fill();
-      ctx.fillStyle = ready ? "#57b8ff" : "#c0b7a8";
+      ctx.fillStyle = ready ? THEME.info : THEME.textDim;
       ctx.font = "bold 11px 'Segoe UI', sans-serif";
       ctx.textAlign = "left";
       ctx.fillText(ready ? "READY" : "RELOAD", 28, 131);
       ctx.fillStyle = "rgba(255,255,255,0.12)";
       ctx.fillRect(84, 123, 130, 9);
-      ctx.fillStyle = ready ? "#57b8ff" : "#5a6672";
+      ctx.fillStyle = ready ? THEME.info : "#5a6672";
       ctx.fillRect(84, 123, 130 * val, 9);
       ctx.restore();
     }
@@ -906,13 +1003,13 @@ class ArenaRenderer {
       ctx.fillStyle = "rgba(0,0,0,0.45)";
       pathRoundRect(ctx, 16, 114, 210, 26, 8);
       ctx.fill();
-      ctx.fillStyle = boosting ? "#e74c3c" : "#c0b7a8";
+      ctx.fillStyle = boosting ? THEME.danger : THEME.textDim;
       ctx.font = "bold 11px 'Segoe UI', sans-serif";
       ctx.textAlign = "left";
       ctx.fillText(boosting ? "CHARGE!" : "CHARGE", 28, 131);
       ctx.fillStyle = "rgba(255,255,255,0.12)";
       ctx.fillRect(84, 123, 130, 9);
-      ctx.fillStyle = boosting ? "#e74c3c" : (g.ramCharge >= 1 ? "#e67e22" : "#c9a227");
+      ctx.fillStyle = boosting ? THEME.danger : (g.ramCharge >= 1 ? THEME.warn : "#c9a227");
       ctx.fillRect(84, 123, 130 * val, 9);
       ctx.restore();
     }
@@ -921,20 +1018,23 @@ class ArenaRenderer {
   drawBanners() {
     const g = this.arena, ctx = this.ctx;
     if (!g.banners || !g.banners.length) return;
+    // ONE banner on screen at a time (user) — banners[0] is the active one;
+    // the rest are queued in the sim. Fade out against its current stay time
+    // (1s when the queue is backed up, 3s when it has the stage to itself).
+    const b = g.banners[0];
+    const stay = g.banners.length > 1 ? BANNER_MIN : BANNER_FULL;
     ctx.save();
     ctx.textAlign = "center";
-    g.banners.forEach((b, i) => {
-      const a = b.age < 0.25 ? b.age / 0.25 : b.age > b.dur - 0.4 ? (b.dur - b.age) / 0.4 : 1;
-      ctx.globalAlpha = clamp(a, 0, 1);
-      ctx.fillStyle = "#ffd166";
-      ctx.font = "bold 30px 'Segoe UI', sans-serif";
-      ctx.fillText(b.text, VIEW.w / 2, 130 + i * 54);
-      if (b.sub) {
-        ctx.fillStyle = "#e8e2d6";
-        ctx.font = "14px 'Segoe UI', sans-serif";
-        ctx.fillText(b.sub, VIEW.w / 2, 152 + i * 54);
-      }
-    });
+    const a = b.age < 0.2 ? b.age / 0.2 : b.age > stay - 0.3 ? (stay - b.age) / 0.3 : 1;
+    ctx.globalAlpha = clamp(a, 0, 1);
+    ctx.fillStyle = THEME.accent;
+    ctx.font = "bold 30px 'Segoe UI', sans-serif";
+    ctx.fillText(b.text, VIEW.w / 2, 130);
+    if (b.sub) {
+      ctx.fillStyle = THEME.text;
+      ctx.font = "14px 'Segoe UI', sans-serif";
+      ctx.fillText(b.sub, VIEW.w / 2, 152);
+    }
     ctx.globalAlpha = 1;
     ctx.restore();
   }

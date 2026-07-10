@@ -57,6 +57,8 @@ const RAIL_SPEED = 2200;         // slug speed (user: a lot quicker — near-hit
 const RAIL_LIFE = 1.0;           // slug lifetime (~2200px reach)
 const RAIL_CD = 2.2;             // reload between shots (shortened by RELOAD; no charge-up — user)
 const RAIL_STRENGTH = 3;         // pierce/clash budget: cars cost 1, scrap 1.5, boss absorbs
+const BANNER_FULL = 3;           // seconds a center banner shows when nothing is queued (user)
+const BANNER_MIN = 1;            // minimum show time when more banners are waiting (user)
 const STREAK_MILESTONES = [3, 5, 8]; // wreck-streak counts that trigger a RAMPAGE callout (then every +5)
 const SLOT_UNLOCKS = { 5: "armor" }; // level → slot unlocked (single weapon slot for now — user)
 const BOT_COUNT = 8;             // bots kept alive in the world
@@ -239,7 +241,7 @@ class ArenaGame {
       this.slots[slot] = true;
       this.banner("ARMOR SLOT UNLOCKED", "loot one from a wreck");
     } else {
-      this.banner("LEVEL " + this.level, "+1 stat point");
+      this.banner("LEVEL " + this.level, "+1 stat point", "level"); // dedupes in the queue
     }
     this.audio.playRoundClear();                       // rising level-up jingle
     this.particles.sparks(this.player.x, this.player.y, fxRand(0, TAU), 22, 260); // gold burst
@@ -301,9 +303,20 @@ class ArenaGame {
     return !!(L && L.weapon1 && L.weapon1.type === "railgun");
   }
 
-  banner(text, sub) {
-    this.banners.push({ text, sub: sub || "", age: 0, dur: 2.2 });
-    if (this.banners.length > 3) this.banners.shift();
+  // center banners are a QUEUE (user): only banners[0] is ever ON SCREEN; the
+  // rest wait their turn. The active banner shows BANNER_FULL (3s) when
+  // nothing waits, but advances after BANNER_MIN (1s) when the queue is
+  // backed up. LEVEL-UP banners dedupe in the queue (only the newest queued
+  // one survives — leveling 3x fast shows one "LEVEL N"). Queue capped so a
+  // chaotic fight can't build a backlog of stale news.
+  banner(text, sub, kind) {
+    if (kind === "level") { // drop older queued level-ups (never the active banner)
+      for (let i = this.banners.length - 1; i >= 1; i--) {
+        if (this.banners[i].kind === "level") this.banners.splice(i, 1);
+      }
+    }
+    this.banners.push({ text, sub: sub || "", age: 0, kind: kind || "" });
+    if (this.banners.length > 7) this.banners.splice(1, 1); // cap: drop the oldest QUEUED
   }
 
   // -- weapons: SINGLE-SLOT input model (user, 2026-07-09: one weapon slot for
@@ -428,7 +441,7 @@ class ArenaGame {
         const bx = p.x + f.x * (p.length / 2 + 6), by = p.y + f.y * (p.length / 2 + 6);
         for (let i = 0; i < pellets; i++) {
           const ang = aimAng + (i / (pellets - 1) - 0.5) * 2 * spread; // spread centered on the aim
-          const b = new Bullet(bx, by, ang, 620, true, 9 * dmul);
+          const b = new Bullet(bx, by, ang, 620, true, 22.5 * dmul); // 2.5x (user) — point-blank volleys hit HARD
           b.life = 0.34; b.radius = 3; // short reach
           b.strength = 0.35; // weak pellets: one normal cannon bullet (str 1) breaks ~3 of them
           b.shooter = p;
@@ -1323,8 +1336,14 @@ class ArenaGame {
   }
 
   tickBanners(dt) {
-    for (const b of this.banners) b.age += dt;
-    this.banners = this.banners.filter((b) => b.age < b.dur);
+    // only the ACTIVE banner (banners[0]) ages; queued ones wait fresh. It
+    // yields after BANNER_MIN when others wait, else lingers to BANNER_FULL.
+    if (this.banners.length) {
+      const b = this.banners[0];
+      b.age += dt;
+      const stay = this.banners.length > 1 ? BANNER_MIN : BANNER_FULL;
+      if (b.age >= stay) this.banners.shift();
+    }
     for (const k of this.killfeed) k.age += dt;
     this.killfeed = this.killfeed.filter((k) => k.age < 5); // lines linger 5s
   }

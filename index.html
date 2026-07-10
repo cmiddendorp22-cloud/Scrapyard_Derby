@@ -55,6 +55,28 @@
       <label for="fullscreen-btn">FULLSCREEN</label>
       <button id="fullscreen-btn" class="option-toggle">OFF</button>
     </div>
+    <div class="options-row">
+      <label>CROSSHAIR</label>
+      <div id="xhair-chips"></div>
+    </div>
+    <div class="options-row">
+      <label for="xhair-size">CROSSHAIR SIZE</label>
+      <input type="range" id="xhair-size" min="60" max="180" value="100">
+      <span id="xhair-size-value">100%</span>
+    </div>
+    <div class="options-row">
+      <label>CROSSHAIR COLOR</label>
+      <div id="xhair-rgb">
+        <input type="range" id="xhair-r" min="0" max="255" value="255">
+        <input type="range" id="xhair-g" min="0" max="255" value="224">
+        <input type="range" id="xhair-b" min="0" max="255" value="102">
+      </div>
+      <span id="xhair-swatch"></span>
+    </div>
+    <div class="options-row">
+      <label for="xhair-arc-btn">RELOAD INDICATOR</label>
+      <button id="xhair-arc-btn" class="option-toggle">ON</button>
+    </div>
     <button id="options-back-btn">BACK</button>
   </div>
 
@@ -196,6 +218,7 @@
 </div>
 
 <!-- Classic scripts (no modules) so the game runs straight from file:// with no server. Order matters. -->
+<script src="js/theme.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/rng.js"></script>
 <script src="js/input.js"></script>

@@ -10,12 +10,13 @@
 // spent stat points. This file is pure data/helpers — no game state.
 // ---------------------------------------------------------------------------
 
+// rarity colors come from the shared THEME (js/theme.js) — retheme there
 const ARENA_TIERS = [
-  { name: "COMMON",    color: "#b9c2cc" },
-  { name: "UNCOMMON",  color: "#5fd35f" },
-  { name: "RARE",      color: "#4a9eff" },
-  { name: "EPIC",      color: "#b45cff" },
-  { name: "LEGENDARY", color: "#ffb020" },
+  { name: "COMMON",    color: THEME.tierCommon },
+  { name: "UNCOMMON",  color: THEME.tierUncommon },
+  { name: "RARE",      color: THEME.tierRare },
+  { name: "EPIC",      color: THEME.tierEpic },
+  { name: "LEGENDARY", color: THEME.tierLegendary },
 ];
 const TIER_MAX = ARENA_TIERS.length - 1; // 4 = legendary
 
