@@ -92,7 +92,27 @@
       "Bash(node \"c:/Users/cmidd/Scrapyard_Derby/tools/shot.js\" \"http://localhost:8080/?mode=arena&weapon=cannon&xp=800\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-stats.png\" 1280 720 1200)",
       "Bash(grep -n \"dropPart\\(x, y, part\\) {\" \"c:/Users/cmidd/Scrapyard_Derby/js/arena/arena.js\")",
       "Bash(node \"c:/Users/cmidd/Scrapyard_Derby/tools/shot.js\" \"http://localhost:8080/?mode=arena&weapon=cannon\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-partsopen.png\" 1280 720 1200)",
-      "Bash(node \"c:/Users/cmidd/Scrapyard_Derby/tools/shot.js\" \"http://localhost:8080/?mode=arena&weapon=cannon\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-partsopen2.png\" 1280 720 1200)"
+      "Bash(node \"c:/Users/cmidd/Scrapyard_Derby/tools/shot.js\" \"http://localhost:8080/?mode=arena&weapon=cannon\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-partsopen2.png\" 1280 720 1200)",
+      "Bash(node \"c:/Users/cmidd/Scrapyard_Derby/tools/shot.js\" \"http://localhost:8080/?mode=arena&weapon=cannon&xp=800\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-statsleft.png\" 1280 720 1200)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?touch=1&mode=arena&weapon=cannon&xp=800\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-statsleft-mobile.png\" 844 390 900)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?touch=1&mode=arena&weapon=cannon&xp=800\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-statsleft-mobile2.png\" 844 390 900)",
+      "Bash(node tools/shot.js 'http://localhost:8080/?mode=arena&weapon=cannon&xp=800' __TRACKED_VAR__/fill-ultrawide.png 2560 1080 900)",
+      "Bash(node tools/shot.js 'http://localhost:8080/?mode=arena&weapon=cannon&xp=800' __TRACKED_VAR__/fill-1610.png 1920 1200 900)",
+      "Bash(node tools/shot.js 'http://localhost:8080/?mode=arena&weapon=cannon&xp=800' __TRACKED_VAR__/fill-169.png 1920 1080 900)",
+      "Bash(node tools/shot.js 'http://localhost:8080/?mode=arena&weapon=cannon&pause' __TRACKED_VAR__/opts.png 1280 720 700)",
+      "Bash(node tools/shot.js 'http://localhost:8080/?touch=1&mode=arena&weapon=cannon&xp=200' __TRACKED_VAR__/fill-mobile.png 844 390 900)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?screen=options\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/opts2.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?screen=options\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/opts3.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&wheels\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-wheels.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&wheels\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-wheels2.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&crate\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-crate.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&crate\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-crate2.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&railgun\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-railgun.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?touch=1&mode=arena&weapon=cannon&railgun\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-railgun-mobile.png\" 844 390 900)",
+      "Bash(node --check js/arena/arena-boss.js)",
+      "Bash(node \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/run-tests.js\" 2)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&railgun&reloading\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-rail-reload.png\" 1280 720 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&railgun&reloading\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-rail-reload2.png\" 1280 720 600)"
     ]
   }
 }

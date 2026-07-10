@@ -89,10 +89,11 @@ class ArenaRenderer {
 
   draw() {
     const g = this.arena, ctx = this.ctx;
-    // map logical WORLD-sized viewport onto the (hi-dpi) backing store, then
-    // draw everything in that fixed 1280x720 logical space
-    ctx.setTransform(this.canvas.width / WORLD.w, 0, 0, this.canvas.height / WORLD.h, 0, 0);
-    const vw = WORLD.w, vh = WORLD.h;
+    // map the logical VIEW-sized viewport onto the (hi-dpi) backing store, then
+    // draw everything in that area-locked logical space (VIEW matches the canvas
+    // aspect, so the context scale stays uniform = no distortion)
+    ctx.setTransform(this.canvas.width / VIEW.w, 0, 0, this.canvas.height / VIEW.h, 0, 0);
+    const vw = VIEW.w, vh = VIEW.h;
     const camL = g.cam.x - vw / 2, camT = g.cam.y - vh / 2;
 
     // --- scrolling tiled floor (screen space, offset by camera mod tile) ---
@@ -125,6 +126,8 @@ class ArenaRenderer {
 
     // scrap (viewport-culled)
     for (const s of g.scrap) { if (onScreen(s.x, s.y, 40)) this.drawScrap(s); }
+    // loot crates (roaming reward — cracked by bullets or a moving car)
+    for (const c of g.crates || []) { if (!c.dead && onScreen(c.x, c.y, 30)) this.drawCrate(c); }
     // dropped parts on the ground (tier-colored; ones in reach glow brighter)
     const reach = new Set(g.collectibleDrops ? g.collectibleDrops() : []);
     for (const d of g.drops || []) { if (onScreen(d.x, d.y, 20)) this.drawPartDrop(d, reach.has(d)); }
@@ -169,13 +172,13 @@ class ArenaRenderer {
       const name = !t ? "" : t === g.boss ? "JUNK TITAN" : t.name + "  L" + t.level;
       ctx.fillStyle = "#ffd166";
       ctx.font = "bold 16px 'Segoe UI', sans-serif";
-      ctx.fillText("SPECTATING" + (name ? ":  " + name : ""), WORLD.w / 2, 86);
+      ctx.fillText("SPECTATING" + (name ? ":  " + name : ""), VIEW.w / 2, 86);
       ctx.restore();
       return;
     }
     // wrecked: dim the world behind the death menu
     ctx.fillStyle = "rgba(10,8,6,0.55)";
-    ctx.fillRect(0, 0, WORLD.w, WORLD.h);
+    ctx.fillRect(0, 0, VIEW.w, VIEW.h);
     ctx.restore();
   }
 
@@ -185,6 +188,24 @@ class ArenaRenderer {
     // (bots, boss — and other humans once there's netcode) read as red danger.
     const col = b.shooter === this.arena.player ? "#ffe066" : "#ff5c5c";
     ctx.save();
+    if (b.railgun) { // piercing slug: a long bright lance with a white-hot core
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.vx * 0.055, b.y - b.vy * 0.055);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.vx * 0.04, b.y - b.vy * 0.04);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     ctx.strokeStyle = col;
     ctx.globalAlpha = 0.4;
     ctx.lineWidth = b.radius;
@@ -294,6 +315,40 @@ class ArenaRenderer {
     ctx.restore();
   }
 
+  // loot crate: a banded wooden box with a gold latch — shoot or smash it open.
+  // Damage state shows as splintering (darker + cracked) once it's been shot.
+  drawCrate(c) {
+    const ctx = this.ctx, r = c.r;
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate((c.seed / TAU - 0.5) * 0.26); // slight ±7° seeded tilt so they don't grid up
+    const hurt = c.hp < CRATE_HP;
+    ctx.fillStyle = hurt ? "#6d5327" : "#8a6a32";        // wood (darker once shot)
+    pathRoundRect(ctx, -r, -r, r * 2, r * 2, 3);
+    ctx.fill();
+    ctx.strokeStyle = "#4c3a1c";                          // plank seams
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-r, -r * 0.33); ctx.lineTo(r, -r * 0.33);
+    ctx.moveTo(-r, r * 0.33); ctx.lineTo(r, r * 0.33);
+    ctx.stroke();
+    ctx.strokeStyle = "#3d2f17";                          // metal edge band
+    ctx.lineWidth = 2.5;
+    pathRoundRect(ctx, -r, -r, r * 2, r * 2, 3);
+    ctx.stroke();
+    ctx.fillStyle = "#ffd166";                            // gold latch = "loot!"
+    ctx.fillRect(-3, -3, 6, 6);
+    if (hurt) {                                           // splinter cracks
+      ctx.strokeStyle = "#2e2312";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.6, -r * 0.7); ctx.lineTo(-r * 0.1, -r * 0.1);
+      ctx.moveTo(r * 0.7, r * 0.2); ctx.lineTo(r * 0.15, r * 0.75);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // simple chassis + 4 wheels + the chosen weapon (modular part rendering later)
   drawCar(car, color, weapon) {
     const ctx = this.ctx;
@@ -301,11 +356,34 @@ class ArenaRenderer {
     ctx.save();
     ctx.translate(car.x, car.y);
     ctx.rotate(car.heading);
-    // wheels
-    ctx.fillStyle = "#1d1d1f";
-    for (const sx of [-L * 0.32, L * 0.32]) {
-      ctx.fillRect(sx - 5, -W / 2 - 3, 10, 6);
-      ctx.fillRect(sx - 5, W / 2 - 3, 10, 6);
+    // wheels — PER-WHEEL damage cues (dismemberment): a freshly-chipped wheel
+    // FLASHES, a broken wheel hangs askew + rusty, a mending wheel pulses green
+    // (out-of-combat auto-repair). Local frame: front = +x, car's LEFT = -y.
+    const comps = car.components || {};
+    const flash = car.compFlash || {};
+    const now = performance.now();
+    for (const key of ["wheelFL", "wheelFR", "wheelRL", "wheelRR"]) {
+      const c = comps[key];
+      const sx = (key[5] === "F" ? 1 : -1) * L * 0.32;
+      const ly = (key[6] === "L" ? -W / 2 : W / 2) - 3;
+      const broken = c && c.hp <= 0;
+      ctx.fillStyle = flash[key] > 0 ? "#ffd9c9"                 // just chipped: flash
+        : broken ? "#4a2b20"                                     // broken: rusty
+        : c && c.hp / c.max < 0.5 ? "#33231d"                    // hurting: browned
+        : "#1d1d1f";
+      if (broken) { // hangs askew off the axle
+        ctx.save();
+        ctx.translate(sx, ly + 3 + (key[6] === "L" ? -2 : 2));
+        ctx.rotate(sx < 0 ? 0.5 : -0.5);
+        ctx.fillRect(-5, -3, 10, 6);
+        ctx.restore();
+      } else {
+        ctx.fillRect(sx - 5, ly, 10, 6);
+      }
+      if (car.wheelMending && c && c.hp < c.max) { // pulsing green = repairing
+        ctx.fillStyle = "rgba(95,211,95," + (0.35 + 0.3 * Math.sin(now / 130)) + ")";
+        ctx.fillRect(sx - 6, ly - 1, 12, 8);
+      }
     }
     // body
     ctx.fillStyle = color;
@@ -314,7 +392,19 @@ class ArenaRenderer {
     // windshield
     ctx.fillStyle = "rgba(200,230,255,0.75)";
     ctx.fillRect(L * 0.08, -W * 0.3, L * 0.2, W * 0.6);
-    this.drawWeaponGear(ctx, weapon || this.arena.startWeapon, L, W);
+    // railgun state → on-car visuals (charging glow / reload bar), player + bots
+    const wid = weapon || this.arena.startWeapon;
+    this._railState = null;
+    if (wid === "railgun") {
+      const g = this.arena;
+      if (car === g.player) {
+        this._railState = { reload: g.railCd > 0 ? clamp(g.railCd / RAIL_CD, 0, 1) : 0 };
+      } else if (car.fireTimer !== undefined) {
+        this._railState = { reload: car.fireTimer > 0 ? clamp(car.fireTimer / 2.6, 0, 1) : 0 };
+      }
+    }
+    this.drawWeaponGear(ctx, wid, L, W);
+    this._railState = null;
     ctx.restore();
   }
 
@@ -330,6 +420,15 @@ class ArenaRenderer {
       ctx.strokeStyle = "rgba(231,76,60," + (0.25 + 0.45 * (1 - t)) + ")";
       ctx.lineWidth = 6;
       ctx.beginPath(); ctx.arc(boss.x, boss.y, BOSS_SLAM_R * t, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+    // shrapnel-ring telegraph: a tightening orange band hugging the hull
+    if (boss.ringWind > 0) {
+      const rt = 1 - boss.ringWind / 0.6;
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,150,40," + (0.3 + 0.5 * rt) + ")";
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(boss.x, boss.y, R + 14 - 8 * rt, 0, TAU); ctx.stroke();
       ctx.restore();
     }
     ctx.save();
@@ -508,6 +607,22 @@ class ArenaRenderer {
       ctx.fillRect(L * 0.1, W * 0.24 - 2.5, L / 2 - 4, 5);
       ctx.fillStyle = "#5a4633"; // wooden stock hint at the breech
       ctx.fillRect(L * 0.02, -W * 0.24 - 3.5, 6, W * 0.48 + 7);
+    } else if (weaponId === "railgun") {
+      // rail state (player + bots): bright coils when READY, coils DIM RED
+      // while RELOADING with a thin refill bar tracking along the barrel
+      const st = this._railState; // set by drawCar just before the call (null = idle/portrait)
+      const reloading = st ? st.reload : 0;
+      ctx.fillStyle = "#2b3a4d"; // extra-long thin rail barrel
+      ctx.fillRect(-L * 0.1, -1.8, L + 4, 3.6);
+      ctx.fillStyle = reloading > 0 ? "#7a3a30" : "#57b8ff"; // spent red vs ready cyan
+      ctx.fillRect(L * 0.18, -3, 3, 6);
+      ctx.fillRect(L * 0.42, -3, 3, 6);
+      ctx.fillStyle = "#1d1d1f"; // muzzle brake
+      ctx.fillRect(L / 2 + 2, -3, 4, 6);
+      if (reloading > 0) { // thin reload bar refilling along the barrel
+        ctx.fillStyle = "rgba(255,120,90,0.8)";
+        ctx.fillRect(-L * 0.1, 4, (L + 4) * (1 - reloading), 2);
+      }
     } else {
       ctx.fillStyle = "#333b41"; // cannon barrel
       ctx.fillRect(0, -2.5, L / 2 + 9, 5);
@@ -543,7 +658,7 @@ class ArenaRenderer {
     // overlaps the canvas on near-16:9 phones — drop the map below it. The
     // button is 44 CSS px + 10 top offset, and the canvas can be scaled down
     // to ~0.54 on the 390px-tall design floor, so clear ~100 canvas px.
-    const x0 = WORLD.w - S - PAD, y0 = this.arena.touchMode ? PAD + 90 : PAD;
+    const x0 = VIEW.w - S - PAD, y0 = this.arena.touchMode ? PAD + 90 : PAD;
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     pathRoundRect(ctx, x0, y0, S, S, 8);
@@ -554,7 +669,7 @@ class ArenaRenderer {
     const sx = S / ARENA.w, sy = S / ARENA.h;
     const p = this.arena.player;
     // viewport rectangle
-    const vw = WORLD.w, vh = WORLD.h;
+    const vw = VIEW.w, vh = VIEW.h;
     ctx.strokeStyle = "rgba(255,255,255,0.25)";
     ctx.strokeRect(x0 + (this.arena.cam.x - vw / 2) * sx, y0 + (this.arena.cam.y - vh / 2) * sy, vw * sx, vh * sy);
     // bounty sector: highlight the leader's coarse grid cell (pressure, not a pin)
@@ -610,7 +725,7 @@ class ArenaRenderer {
     // Titan (~1200px, camera-based so it also works while spectating)
     if (dist(g.cam.x, g.cam.y, boss.x, boss.y) > 1200) return;
     // drops below the spectate button row when it's up
-    const w = 320, h = 9, x = (WORLD.w - w) / 2, y = g.spectate ? 64 : 16;
+    const w = 320, h = 9, x = (VIEW.w - w) / 2, y = g.spectate ? 64 : 16;
     const magnet = boss.kind === "magnet", vul = magnet && boss.isVulnerable && boss.isVulnerable();
     ctx.save();
     ctx.textAlign = "center";
@@ -619,7 +734,7 @@ class ArenaRenderer {
     let label = boss.name;
     if (vul) label += "  —  OVERLOADED";
     else if (magnet && boss.megaWind > 0) label += "  —  CHARGING!";
-    ctx.fillText(label, WORLD.w / 2, y - 4);
+    ctx.fillText(label, VIEW.w / 2, y - 4);
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     pathRoundRect(ctx, x - 2, y - 2, w + 4, h + 4, 4);
     ctx.fill();
@@ -637,7 +752,7 @@ class ArenaRenderer {
     const lb = g.leaderboard;
     if (!lb || !lb.length) return;
     const S = 150, PAD = 14;
-    const x0 = WORLD.w - S - PAD;
+    const x0 = VIEW.w - S - PAD;
     const top = (g.touchMode ? PAD + 90 : PAD) + S + 8; // just below the minimap
     const rows = Math.min(g.touchMode ? 3 : 5, lb.length);
     const headH = 16, rowH = 15, h = headH + rows * rowH + 4;
@@ -675,7 +790,7 @@ class ArenaRenderer {
     // needs to hide while points are pending)
     const compact = g.touchMode;                        // smaller + fewer lines on phones
     const S = 150, PAD = 14;
-    const rightX = (WORLD.w - S - PAD) - 12;            // gap to the minimap's left edge
+    const rightX = (VIEW.w - S - PAD) - 12;            // gap to the minimap's left edge
     const topY = (g.touchMode ? PAD + 90 : PAD) + 12;   // aligned with the minimap top
     const rows = Math.min(compact ? 3 : 6, fk.length);
     const fs = compact ? 10 : 12, lh = compact ? 14 : 16;
@@ -729,6 +844,29 @@ class ArenaRenderer {
     ctx.fillRect(28, 58, 186, 7);
     ctx.fillStyle = "#7bed9f";
     ctx.fillRect(28, 58, 186 * xpFrac, 7);
+    // WHEEL health mini-diagram (dismemberment readout — user): a nose-up car
+    // chip in the panel's top-right, one pip per wheel colored by its health
+    // (green → red, dark = broken, bright green pulse = mending)
+    const wcar = bot || g.player;
+    if (wcar.components && wcar.components.wheelFL) {
+      const bx = 198, by = 20;
+      ctx.fillStyle = "rgba(255,255,255,0.15)";
+      pathRoundRect(ctx, bx, by, 13, 23, 3);
+      ctx.fill();
+      const pips = { wheelFL: [bx - 5, by + 2], wheelFR: [bx + 12, by + 2], wheelRL: [bx - 5, by + 14], wheelRR: [bx + 12, by + 14] };
+      const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 130);
+      for (const k of ["wheelFL", "wheelFR", "wheelRL", "wheelRR"]) {
+        const c = wcar.components[k], r = clamp(c.hp / c.max, 0, 1);
+        if (wcar.wheelMending && c.hp < c.max) {
+          ctx.fillStyle = "rgba(95,211,95," + pulse.toFixed(2) + ")"; // mending
+        } else if (c.hp <= 0) {
+          ctx.fillStyle = "#3a2a24"; // broken
+        } else {
+          ctx.fillStyle = "rgb(" + Math.round(90 + (1 - r) * 145) + "," + Math.round(40 + 185 * r) + ",55)";
+        }
+        ctx.fillRect(pips[k][0], pips[k][1], 6, 8);
+      }
+    }
     // stat build readout (bots have no regen stat)
     ctx.font = "10px Consolas, monospace";
     ctx.fillStyle = "#c0b7a8";
@@ -740,6 +878,25 @@ class ArenaRenderer {
       ctx.fillText("+" + statPoints + " point" + (statPoints > 1 ? "s" : "") + " to spend", 28, 100);
     }
     ctx.restore();
+
+    // RAILGUN: RELOAD gauge — fills back up after a shot; READY when full
+    if (!g.dead && g.hasRailgun()) {
+      const ready = g.railCd <= 0;
+      const val = ready ? 1 : 1 - clamp(g.railCd / RAIL_CD, 0, 1);
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      pathRoundRect(ctx, 16, 114, 210, 26, 8);
+      ctx.fill();
+      ctx.fillStyle = ready ? "#57b8ff" : "#c0b7a8";
+      ctx.font = "bold 11px 'Segoe UI', sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(ready ? "READY" : "RELOAD", 28, 131);
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(84, 123, 130, 9);
+      ctx.fillStyle = ready ? "#57b8ff" : "#5a6672";
+      ctx.fillRect(84, 123, 130 * val, 9);
+      ctx.restore();
+    }
 
     // RAM: charge gauge (hold FIRE to wind up, release to launch) — alive player only
     if (!g.dead && g.hasRam()) {
@@ -771,11 +928,11 @@ class ArenaRenderer {
       ctx.globalAlpha = clamp(a, 0, 1);
       ctx.fillStyle = "#ffd166";
       ctx.font = "bold 30px 'Segoe UI', sans-serif";
-      ctx.fillText(b.text, WORLD.w / 2, 130 + i * 54);
+      ctx.fillText(b.text, VIEW.w / 2, 130 + i * 54);
       if (b.sub) {
         ctx.fillStyle = "#e8e2d6";
         ctx.font = "14px 'Segoe UI', sans-serif";
-        ctx.fillText(b.sub, WORLD.w / 2, 152 + i * 54);
+        ctx.fillText(b.sub, VIEW.w / 2, 152 + i * 54);
       }
     });
     ctx.globalAlpha = 1;

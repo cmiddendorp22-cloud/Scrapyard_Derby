@@ -34,6 +34,8 @@ class ArenaBoss {
     this.fireTimer = 2.4;
     this.slamTimer = 4;           // cooldown to the next slam attempt
     this.slamWind = 0;            // >0 during the wind-up telegraph
+    this.ringTimer = rand(6, 10); // cooldown to the next SHRAPNEL RING (user: more attacks)
+    this.ringWind = 0;            // >0 during the ring spin-up telegraph
     this.lastHitBy = null;        // kill attribution (who lands the core kill)
     // 4 armor plates around a core. Plate angles are LOCAL (relative to
     // heading); break the one facing you to shoot the core through the gap.
@@ -101,7 +103,7 @@ class ArenaBoss {
       // still dodgeable by turning.
       this.fireTimer -= dt;
       if (target && bd < 820 && this.fireTimer <= 0 && !this.plates[0].dead) {
-        this.fireTimer = 1.0;
+        this.fireTimer = 0.7; // faster cannon (user: more firerate; was 1.0)
         const bap = arenaAimPoint(this, target, 300, 0.5);
         const ang = Math.atan2(bap.y - this.y, bap.x - this.x);
         const b = new Bullet(this.x + Math.cos(ang) * this.radius, this.y + Math.sin(ang) * this.radius, ang, 300, false, 26);
@@ -109,6 +111,29 @@ class ArenaBoss {
         b.strength = 3; // heavy shell — eats 3 normal bullets before breaking
         game.bullets.push(b);
         if (game.audio.playEnemyShoot) game.audio.playEnemyShoot();
+      }
+
+      // SHRAPNEL RING (user: more attacks): periodic radial burst — a short
+      // spin-up telegraph, then a ring of 12 slugs with gaps to slip between.
+      // Fires regardless of surviving plates (the core spits it).
+      if (this.ringWind > 0) {
+        this.ringWind -= dt;
+        if (this.ringWind <= 0) {
+          const N = 12, base = rand(0, TAU);
+          for (let i = 0; i < N; i++) {
+            const a = base + (i / N) * TAU;
+            const rb = new Bullet(this.x + Math.cos(a) * (this.radius + 4), this.y + Math.sin(a) * (this.radius + 4), a, 250, false, 16);
+            rb.life = 2.4; rb.shooter = this; rb.radius = 5;
+            game.bullets.push(rb);
+          }
+          if (game.audio.playExplosion) game.audio.playExplosion();
+        }
+      } else {
+        this.ringTimer -= dt;
+        if (target && bd < 700 && this.ringTimer <= 0) {
+          this.ringWind = 0.6;            // telegraph: spin-up flash
+          this.ringTimer = rand(8, 13);   // seeded cadence
+        }
       }
     }
   }
@@ -161,10 +186,28 @@ class ArenaMagnet {
   hpFrac() { return clamp(this.coreHp / this.coreMax, 0, 1); }
   isVulnerable() { return this.overload > 0; }
 
+  // radial junk burst fired the instant the overload ends (8 slugs, gaps to dodge)
+  debrisFling(game) {
+    const N = 8, base = rand(0, TAU);
+    for (let i = 0; i < N; i++) {
+      const a = base + (i / N) * TAU;
+      const b = new Bullet(this.x + Math.cos(a) * (this.radius + 6), this.y + Math.sin(a) * (this.radius + 6), a, 330, false, 20);
+      b.life = 1.8; b.shooter = this; b.radius = 6;
+      game.bullets.push(b);
+    }
+    if (game.audio.playExplosion) game.audio.playExplosion();
+  }
+
   update(dt, game) {
     if (this.dead) return;
     if (this.hitFlash > 0) this.hitFlash -= dt;
-    if (this.overload > 0) this.overload -= dt;
+    if (this.overload > 0) {
+      this.overload -= dt;
+      // DEBRIS FLING (user: more attacks): the overload window SLAMS SHUT by
+      // hurling the junk it gathered outward — a radial burst that punishes
+      // cars still hugging it when the vulnerability ends
+      if (this.overload <= 0) this.debrisFling(game);
+    }
 
     // CONSTANT gravity well: drag every car in range inward, stronger the
     // closer they are (quadratic ramp — the edge barely tugs, the center hauls)

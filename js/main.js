@@ -22,12 +22,21 @@
   // backing store.
   const DPR_CAP = 2;
   function fit() {
-    const displayScale = Math.min(window.innerWidth / WORLD.w, window.innerHeight / WORLD.h);
-    canvas.style.width = WORLD.w * displayScale + "px";
-    canvas.style.height = WORLD.h * displayScale + "px";
+    // Gauntlet is a FIXED 1280x720 arena (static camera, walls at the edges) so
+    // it must letterbox. Arena (and the start screen) AREA-LOCK the viewport to
+    // the window aspect ratio: fills the screen with no bars, same visible area
+    // on every monitor (fair). setView() clamps extreme aspects (they letterbox).
+    const gauntlet = active === game;
+    setView(window.innerWidth / window.innerHeight, gauntlet);
+    // Uniform CSS scale that fits VIEW inside the window. When VIEW already
+    // matches the window aspect (the common case) this fills edge-to-edge; when
+    // clamped (or fixed Gauntlet) it letterboxes the leftover strip.
+    const displayScale = Math.min(window.innerWidth / VIEW.w, window.innerHeight / VIEW.h);
+    canvas.style.width = VIEW.w * displayScale + "px";
+    canvas.style.height = VIEW.h * displayScale + "px";
     const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
-    canvas.width = Math.max(WORLD.w, Math.round(WORLD.w * displayScale * dpr));
-    canvas.height = Math.max(WORLD.h, Math.round(WORLD.h * displayScale * dpr));
+    canvas.width = Math.max(1, Math.round(VIEW.w * displayScale * dpr));
+    canvas.height = Math.max(1, Math.round(VIEW.h * displayScale * dpr));
     positionArenaDom();
   }
   // Anchor the fixed-position Arena loadout panel + toggle to the canvas so they
@@ -35,11 +44,32 @@
   function positionArenaDom() {
     if (!canvas.getBoundingClientRect) return; // headless/no-DOM guard
     const r = canvas.getBoundingClientRect();
-    const s = r.width / WORLD.w;
+    const s = r.width / VIEW.w;
+    const leftPx = r.left + 16 * s;
+    const stats = document.getElementById("arena-stats");
     const lo = document.getElementById("arena-loadout");
     const tog = document.getElementById("loadout-toggle");
-    if (lo) { lo.style.left = (r.left + 16 * s) + "px"; lo.style.top = (r.top + 150 * s) + "px"; }
-    if (tog) { tog.style.left = (r.left + 16 * s) + "px"; tog.style.top = (r.top + r.height * 0.60) + "px"; }
+    // SPEND POINTS panel: top-left, under the LVL/HP HUD block (user)
+    let loTopPx = r.top + 150 * s;
+    if (stats) {
+      stats.style.left = leftPx + "px";
+      stats.style.top = (r.top + 146 * s) + "px";
+      if (!stats.classList.contains("hidden")) { // push the loadout below it
+        loTopPx = r.top + 146 * s + stats.getBoundingClientRect().height + 8;
+      }
+    }
+    // PARTS toggle: stack it below the loadout panel (if shown) else below the
+    // stat panel, so it never overlaps them on short (mobile) viewports.
+    let togTopPx = r.top + 150 * s;
+    if (lo) {
+      lo.style.left = leftPx + "px"; lo.style.top = loTopPx + "px";
+      if (!lo.classList.contains("hidden")) {
+        togTopPx = loTopPx + lo.getBoundingClientRect().height + 8;
+      } else {
+        togTopPx = loTopPx;
+      }
+    }
+    if (tog) { tog.style.left = leftPx + "px"; tog.style.top = togTopPx + "px"; }
   }
   window.addEventListener("resize", fit);
   fit();
@@ -48,6 +78,7 @@
     game.audio.unlock(); // must happen inside a user gesture
     document.getElementById("start-screen").classList.add("hidden");
     active = game;
+    fit(); // Gauntlet pins the viewport to a fixed 1280x720 (letterboxed)
     game.begin();
   }
   // picking Arena opens the starting-weapon screen; choosing a weapon spawns you
@@ -76,10 +107,11 @@
       loadoutOpen = true; lastLoadoutSig = ""; // open the PARTS panel on entry
       panel.classList.remove("hidden");
     });
-    const spawnSet = (tier) => { // a full ring of parts (every slot + weapon) at one tier
+    const spawnSet = (tier) => { // a full ring of parts (every slot + ALL weapon types) at one tier
       const p = arena.player, R = 95;
       const kinds = [["tires", "tires"], ["engine", "engine"], ["armor", "armor"],
-        ["weapon", "cannon"], ["weapon", "shotgun"], ["weapon", "ram"], ["weapon", "minelayer"]];
+        ["weapon", "cannon"], ["weapon", "shotgun"], ["weapon", "ram"], ["weapon", "minelayer"],
+        ["weapon", "railgun"]];
       kinds.forEach(([slot, type], i) => {
         const ang = (i / kinds.length) * Math.PI * 2;
         arena.dropPart(p.x + Math.cos(ang) * R, p.y + Math.sin(ang) * R, makePart(slot, type, tier));
@@ -161,6 +193,7 @@
     }
     arena.startWeapon = id; // INITIAL flow: begin a fresh run
     active = arena;
+    fit(); // Arena area-locks the viewport to the window aspect (fills the screen)
     arena.begin();
     loadoutOpen = true; lastLoadoutSig = ""; // open the PARTS panel on entering the game (user)
   }
@@ -259,6 +292,7 @@
       active.reset();
     }
     active = null;
+    fit(); // back to the dynamic (Arena-style) viewport for the menu
     document.getElementById("start-screen").classList.remove("hidden");
   }
   function nextRound() {
@@ -292,7 +326,12 @@
     const to = lvl + 1;
     if (stat === "health") return "HEALTH " + lvl + " → " + to + ":  +25 max HP  (" + Math.round(arena.maxHp) + " → " + Math.round(arena.maxHp + 25) + ")";
     if (stat === "speed") return "SPEED " + lvl + " → " + to + ":  +5% top speed & accel  (+" + (lvl * 5) + "% → +" + (to * 5) + "%)";
-    if (stat === "reload") return "RELOAD " + lvl + " → " + to + ":  +8% fire rate  (+" + (lvl * 8) + "% → +" + (to * 8) + "%);  hook cooldown " + arena.hookCooldown(lvl).toFixed(1) + "s → " + arena.hookCooldown(to).toFixed(1) + "s";
+    if (stat === "reload") {
+      let txt = "RELOAD " + lvl + " → " + to + ":  +8% fire rate  (+" + (lvl * 8) + "% → +" + (to * 8) + "%)";
+      // hook details only make sense while the HOOK weapon is equipped (user)
+      if (arena.hasMinelayer()) txt += ";  hook cooldown " + arena.hookCooldown(lvl).toFixed(1) + "s → " + arena.hookCooldown(to).toFixed(1) + "s";
+      return txt;
+    }
     if (stat === "regen") return "REGEN " + lvl + " → " + to + ":  heal " + (2 + lvl * 0.5).toFixed(1) + "%/s → " + (2 + to * 0.5).toFixed(1) + "%/s of max HP  (after 5s out of combat)";
     return "";
   }
@@ -318,7 +357,7 @@
     const el = document.getElementById("arena-stats");
     if (active !== arena || arena.statPoints <= 0 || arena.dead) { el.classList.add("hidden"); statTip.classList.add("hidden"); return; }
     el.classList.remove("hidden");
-    document.getElementById("stat-prompt-txt").textContent = "SPEND POINTS — " + arena.statPoints;
+    document.getElementById("stat-prompt-txt").textContent = "SPEND POINTS: " + arena.statPoints;
     for (const s in STAT_LABELS) {
       const btn = document.getElementById("stat-" + s);
       const lvl = arena.stats[s];
@@ -357,29 +396,29 @@
     spec.classList.toggle("hidden", !showSpec);
   }
 
-  // touch ABILITY buttons: one per equipped ability (primary=ability1,
-  // secondary=ability2), labelled HOOK/CHARGE per the loadout; hidden when the
-  // slot has no ability. Only relevant on touch (buttons live in #touch-controls).
+  // touch ABILITY button: labelled HOOK/CHARGE/SNIPE per the equipped weapon;
+  // hidden when the weapon has no ability. One weapon slot = one button
+  // (#touch-ability2 is dormant, kept for a future dual-slot revival). Only
+  // relevant on touch (buttons live in #touch-controls).
   let abilitySig = "";
   function updateAbilityButtons() {
     if (active !== arena || !arena.loadout) return;
     const L = arena.loadout;
     const a1 = arena.weaponAbility(L.weapon1 && L.weapon1.type);
-    const a2 = arena.weaponAbility(L.weapon2 && L.weapon2.type);
-    const sig = (a1 ? a1.name : "-") + "|" + (a2 ? a2.name : "-") + "|" + (arena.dead ? "d" : "a");
+    const sig = (a1 ? a1.name : "-") + "|" + (arena.dead ? "d" : "a");
     if (sig === abilitySig) return; // only touch the DOM when it changes
     abilitySig = sig;
     const b1 = document.getElementById("touch-ability1"), b2 = document.getElementById("touch-ability2");
     const show = !arena.dead;
     b1.textContent = a1 ? a1.name : ""; b1.classList.toggle("hidden", !a1 || !show);
-    b2.textContent = a2 ? a2.name : ""; b2.classList.toggle("hidden", !a2 || !show);
+    b2.classList.add("hidden"); // dormant while there's a single weapon slot
   }
 
   // -- Arena loadout / equip panel: shows your 5 slots + nearby collectible
   // parts; tap a nearby part to equip it. Auto-shows when parts are in reach,
   // or toggled with the PARTS button / L key. -------------------------------
   let loadoutOpen = false;
-  const SLOT_ROWS = [["TIRES", "tires"], ["ENGINE", "engine"], ["WPN1", "weapon1"], ["WPN2", "weapon2"], ["ARMOR", "armor"]];
+  const SLOT_ROWS = [["TIRES", "tires"], ["ENGINE", "engine"], ["WEAPON", "weapon1"], ["ARMOR", "armor"]];
   let lastLoadoutSig = "";
   document.getElementById("loadout-toggle").addEventListener("click", () => { loadoutOpen = !loadoutOpen; lastLoadoutSig = ""; updateLoadoutPanel(); });
 
@@ -441,14 +480,6 @@
       else { v.className = "lo-empty"; v.textContent = "— empty —"; }
       row.appendChild(l); row.appendChild(v); slotsEl.appendChild(row);
     }
-    // dedicated ⇄ control (only when both weapon slots are filled) — swaps which
-    // weapon is primary vs secondary. Full-width so long names never crowd it.
-    if (arena.loadout.weapon1 && arena.loadout.weapon2) {
-      const sw = document.createElement("button");
-      sw.className = "lo-swaprow"; sw.textContent = "⇄ SWAP PRIMARY / SECONDARY";
-      sw.addEventListener("click", () => { arena.swapWeapons(); lastLoadoutSig = ""; updateLoadoutPanel(); });
-      slotsEl.appendChild(sw);
-    }
     const nearEl = document.getElementById("lo-nearby");
     nearEl.innerHTML = "";
     if (!near.length) return;
@@ -481,6 +512,35 @@
     game.audio.setVolume(slider.value / 100);
     try { localStorage.setItem("sd_volume", slider.value); } catch (_) {}
   });
+
+  // fullscreen toggle: uses the Fullscreen API on the whole page. The browser
+  // requires a user gesture to ENTER, so we can't auto-apply a saved preference
+  // on load — we just remember it + reflect the live state. `fit()` reflows the
+  // canvas on the resulting resize automatically (fullscreenchange also fires a
+  // resize). Not all browsers/headless support it — all calls are guarded.
+  const fsBtn = document.getElementById("fullscreen-btn");
+  function isFullscreen() { return !!document.fullscreenElement; }
+  function reflectFullscreen() {
+    if (!fsBtn) return;
+    const on = isFullscreen();
+    fsBtn.textContent = on ? "ON" : "OFF";
+    if (fsBtn.classList && fsBtn.classList.toggle) fsBtn.classList.toggle("on", on);
+  }
+  if (fsBtn) {
+    fsBtn.addEventListener("click", () => {
+      try {
+        if (!isFullscreen()) {
+          const el = document.documentElement;
+          if (el.requestFullscreen) el.requestFullscreen();
+        } else if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+        try { localStorage.setItem("sd_fullscreen", isFullscreen() ? "0" : "1"); } catch (_) {}
+      } catch (_) { /* fullscreen unsupported/blocked */ }
+    });
+    if (document.addEventListener) document.addEventListener("fullscreenchange", () => { reflectFullscreen(); fit(); });
+    reflectFullscreen();
+  }
 
   window.addEventListener("keydown", (e) => {
     if (e.code === "Escape") {
@@ -539,7 +599,7 @@
     if (params.get("mode") === "arena") { // preview Arena: weapon picker, or
       document.getElementById("start-screen").classList.add("hidden");
       const w = params.get("weapon");
-      if (w) { arena.startWeapon = w; active = arena; arena.begin(); loadoutOpen = true; lastLoadoutSig = ""; } // ...straight to play
+      if (w) { arena.startWeapon = w; active = arena; fit(); arena.begin(); loadoutOpen = true; lastLoadoutSig = ""; } // ...straight to play
       else { buildWeaponSelect(); document.getElementById("weapon-select").classList.remove("hidden"); }
       const xp = parseInt(params.get("xp"), 10);
       if (active === arena && Number.isFinite(xp)) arena.addXp(xp); // preview leveled state
@@ -557,6 +617,30 @@
       if (params.has("boss") && active === arena && arena.boss) { // pull the Titan into view
         arena.boss.x = arena.player.x + 40; arena.boss.y = arena.player.y - 190;
       }
+      if (params.has("railgun") && active === arena) { // preview the loot-only railgun equipped
+        arena.loadout.weapon1 = makePart("weapon", "railgun", 2);
+        arena.startWeapon = "railgun";
+        arena.applyStats();
+        if (params.has("reloading")) arena.railCd = 1.9; // show the on-car reload state (mid-refill) for screenshots
+      }
+      if (params.has("crate") && active === arena && arena.crates.length) { // pull a crate into view
+        const c = arena.crates[0];
+        c.dead = false; c.hp = CRATE_HP;
+        c.x = arena.player.x + 110; c.y = arena.player.y - 50;
+      }
+      if (params.has("wheels") && active === arena) { // preview wheel damage states
+        const pp = arena.player;
+        pp.components.wheelFL.hp = 0;                                   // broken front-left (askew)
+        pp.components.wheelRL.hp = pp.components.wheelRL.max * 0.3;     // hurting rear-left
+        syncWheelSides(pp);
+        if (arena.bots.length) { // a nearby bot mid-mend (green pulse)
+          const bot = arena.bots[0];
+          bot.x = pp.x + 140; bot.y = pp.y - 30;
+          bot.components.wheelFR.hp = bot.components.wheelFR.max * 0.4;
+          syncWheelSides(bot);
+          bot.sinceHit = 99; bot.wheelMending = true;
+        }
+      }
       if (params.has("magnet") && active === arena) { // preview the roaming Magnet boss
         arena.boss = arena.spawnCentralBoss("magnet");
         arena.boss.x = arena.player.x + 40; arena.boss.y = arena.player.y - 240;
@@ -566,7 +650,6 @@
         arena.loadout.tires = makePart("tires", "tires", 2);
         arena.loadout.engine = makePart("engine", "engine", 4);
         arena.loadout.weapon1 = makePart("weapon", "cannon", 1);
-        arena.loadout.weapon2 = makePart("weapon", "minelayer", 3);
         arena.loadout.armor = makePart("armor", "armor", 2);
         arena.startWeapon = "cannon";
         arena.applyStats();
@@ -604,6 +687,7 @@
     if (screen) {
       document.getElementById("start-screen").classList.add("hidden");
       active = game;
+      fit();
       game.started = true;
       game.rounds.round = 3;
       game.rounds.state = "intermission";

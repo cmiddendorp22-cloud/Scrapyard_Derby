@@ -6,7 +6,27 @@
 const TAU = Math.PI * 2;
 
 // Static camera: the world IS the canvas. `wall` is the arena wall thickness.
+// WORLD is the fixed Gauntlet play field (walls, spawns, entity clamping).
 const WORLD = { w: 1280, h: 720, wall: 18 };
+
+// VIEW is the logical VIEWPORT: the render + HUD-anchor + camera-window space.
+// For the fixed Gauntlet arena it stays 1280x720 (== WORLD). For Arena it is
+// AREA-LOCKED to the window's aspect ratio: the same visible AREA reshaped to
+// the screen, so the game fills edge-to-edge (no black bars) while no monitor
+// sees more of the world than another (fair). main.js `fit()` sets it.
+const VIEW = { w: 1280, h: 720 };
+const VIEW_AREA = 1280 * 720;   // constant visible area kept across aspect ratios
+const VIEW_AR_MIN = 4 / 3;      // 1.333 — clamp; windows narrower than this letterbox
+const VIEW_AR_MAX = 21 / 9;     // 2.333 — clamp; windows wider than this pillarbox
+// Set VIEW for a target aspect ratio, area-locked. `fixed` pins it to 1280x720
+// (Gauntlet). Returns VIEW for convenience.
+function setView(aspect, fixed) {
+  if (fixed) { VIEW.w = WORLD.w; VIEW.h = WORLD.h; return VIEW; }
+  const ar = clamp(aspect, VIEW_AR_MIN, VIEW_AR_MAX);
+  VIEW.w = Math.sqrt(VIEW_AREA * ar);
+  VIEW.h = Math.sqrt(VIEW_AREA / ar);
+  return VIEW;
+}
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function lerp(a, b, t) { return a + (b - a) * t; }

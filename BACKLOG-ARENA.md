@@ -46,11 +46,12 @@ protecting your own). Nothing else in the genre does this — it's the hook.
     (speed / grip / armored / off-road). Losing wheels still causes pull/drift
     (existing physics). Mismatched wheels = quirky handling to master.
   - **1 engine slot** (from start). Looted engines vary speed/accel.
-  - **Weapon slots: 1 at start, 2nd unlocks with level.** Fill with any combo,
-    e.g. cannon+cannon, cannon+minelayer, cannon+ram, minelayer+ram, etc.
-    (final weapon list open). Weapons map to existing archetypes made
-    player-usable: cannon (fire), minelayer (drop mines + HOOK, see below),
-    ram (front spike/plow, body damage + boost).
+  - **Weapon slot: ONE (user, 2026-07-10 — "easier; might change it back").**
+    The dual primary/secondary model was built (2026-07-09) then retired; the
+    `weapon2` field stays dormant in code for a possible revival. Weapons:
+    cannon (fire), shotgun, minelayer (mines + HOOK), ram (charge/boost), and
+    the LOOT-ONLY railgun (found in crates/boss drops, hold-to-charge piercing
+    sniper).
   - **Armor slot: unlocks with level.** Starts basic; upgrade with better
     armor plates looted from players/AI. Soaks damage before parts take it.
 - **Looting:** a killed car scatters its parts as physical debris (the game
@@ -58,18 +59,26 @@ protecting your own). Nothing else in the genre does this — it's the hook.
   part to bolt it into a matching slot; swapping drops your old part for
   someone else to grab. Fresh wrecks = contested hotspots (feeds convergence).
   Player death drops ONE part weighted to your best tier (done 2026-07-09).
-- **BACKLOG — MAP LOOT SPAWNING (user idea request):** loot that spawns AROUND
-  the map, not just from wrecks — so exploring/roaming pays off. Leading idea:
-  destructible LOOT CRATES — a few scattered crates you shoot/ram open for a
-  part (tier scaled to `lobbyLevel`, small chance of higher). Alternatives:
-  ambient ground-part spawns; a periodic loot-cache event (ties into the
-  roaming scrap-storm idea, item 6). Decide crate vs ambient vs event + spawn
-  rate/tiers when building.
-- **Part durability = dismemberment combat:** looted parts use the existing
-  component-HP model. Shoot a specific part off an enemy (their cannon → now
-  defenseless; their engine → now stalling) and it can be re-looted. Chain of
-  custody across players = emergent drama. Show enemy part-health on approach;
-  reward the surgical kill.
+- ✅ MAP LOOT SPAWNING DONE (2026-07-09, user Q&A): 7 destructible LOOT CRATES
+  scattered around the map — crack with 2 bullets, a moving car, or a mine
+  blast; always drops one part a step above starting gear (70% uncommon / 30%
+  rare, user: the player already starts with commons); respawns elsewhere
+  30-60s later.
+  Bots seek an on-screen crate over scrap every time when not fighting (user
+  spec) and smash it by driving through. No minimap marker (discovery reward).
+  Possible later: the periodic announced supply-drop EVENT (ties into the
+  roaming scrap-storm idea, item 6).
+- **Part durability = dismemberment combat:** ⏳ WHEELS DONE (2026-07-09, user
+  Q&A): every car carries FOUR individual wheels (sized by tires tier); a
+  BULLET chips only the closest wheel, an EXPLOSION the two closest, on top of
+  hull damage; chewed wheels veer the car toward that side, all four failing =
+  fishtail + speed cap (Gauntlet physics via synthesized side pools). Broken
+  wheels stay ON the car (a debuff, not loot — the tires part still drops on
+  kill) and mend after 10s without damage (gradual, green pulse; any hit
+  resets the timer). UI: per-wheel model cues + a 4-pip wheel diagram in the
+  HUD panel. STILL OPEN: extending dismemberment to other slots
+  (weapons/engine/armor) if wheels prove fun — the original "shoot their
+  cannon off and re-loot it" chain-of-custody idea lives here.
 - **✅ Signature weapon — Minelayer + HOOK DONE (2026-07-09):** the minelayer
   carries a grapple that grabs the first car in its path and REELS it toward you
   (into your minefield). Desktop RIGHT-CLICK toward the cursor, touch HOOK button
@@ -77,10 +86,13 @@ protecting your own). Nothing else in the genre does this — it's the hook.
   (`HOOK_MAX_LEN` 750), ~6s cooldown (`HOOK_CD`), ~0.5s reel (`HOOK_REEL_TIME`),
   small chip on the grab (`HOOK_DAMAGE` 15, user pick). BOTS with a minelayer
   use it too (drag you into their field). See changelog for the full wiring.
-  - STILL OPEN — counterplay/tuning: the hooked target currently can't resist
-    (no break-free by driving away, no shootable rope, no obstacle-snap). Add
-    real counterplay so the drag-into-mines combo isn't a guaranteed kill.
-    Also: bots don't yet coordinate mines-first-then-hook.
+  - ✅ HOOK FAIRNESS DONE (2026-07-09; user redefined the old "counterplay"
+    item): bots only THROW hooks when visible on the target's screen (logical
+    1280x720 rect — no off-screen hook snipes), bot hooks scatter much more
+    than gun shots (`persona.hookErr` 0.08-0.18 rad), and a LAUNCHED ram can't
+    be grabbed (immune while launched only, primary-slot rule). No break-free/
+    stun changes (user call). Still open: bots don't yet coordinate
+    mines-first-then-hook.
 - **Part tiers (open):** parts could carry the level/quality of the car they
   came from, so killing a high-level player drops better gear (doubles the
   reward of hunting the strong — pairs with the leader bounty).
@@ -194,8 +206,12 @@ everyone to hurt everyone).
        arena-level-test.js (pellet spread + short life, bot short-range gate).
      • FLAMETHROWER — short cone of continuous damage + brief burn DOT; area
        denial, melts anyone who hugs you.
-     • RAILGUN / SNIPER — slow charge, one high-damage long-range piercing shot
-       (goes through / isn't easily bullet-clashed); the anti-camper.
+     • ✅ RAILGUN DONE (2026-07-10, user picks): LOOT-ONLY (crates 15% of
+       weapon rolls + central-boss drops — never a starting pick), hold ~1s to
+       charge, release a piercing slug (65 x tier x charge) with a strength-3
+       budget: pierces every car for full damage (1 each), drains up to two
+       whole scrap piles (1.5 each), pops mines/crates, bosses absorb it;
+       clash-resistant (eats 3 normal bullets). Bots use looted ones.
      • GATLING / MINIGUN — spin-up then very high fire rate, low per-shot;
        sustained DPS but must commit.
      • FLAK / MORTAR — lobbed arcing shell that bursts on impact for area
@@ -253,10 +269,11 @@ on the minimap.
 mines ignored), capped-weight so combat lines stay readable; runs each step
 alongside wall avoidance, skipped mid ram-launch. (AI chase-dodge was dropped
 from the backlog per user.)
-- **BACKLOG: stronger bosses** — the arena boss encounters should feel more
-substantial and threatening over time. Add tuning ideas such as higher HP,
-stronger attack patterns, more aggressive movement, and more rewarding drops
-so boss fights are more distinct and memorable than a single standard fight.
+- ✅ STRONGER BOSSES DONE (2026-07-10, user picks: more attacks + firerate,
+no new boss yet, no scaling): Titan cannon 1.0s → 0.7s + a telegraphed
+12-slug SHRAPNEL RING every 8-13s; Magnet hurls an 8-slug DEBRIS FLING the
+instant its overload window closes. Revisit if playtests want more (new boss
+concepts remain seeded under item 6).
 **Bot SELF-LEVELING** (user request): bots earn XP the same way the player does
 — farming scrap (`gainXp` on drive-over drain) AND kills (attributed via the
 chain above) — on the SHARED `arenaXpToNext` curve. On level-up a bot spends
@@ -541,6 +558,28 @@ identical states never mirror into loops). See changelog 2026-07-07.
       localStorage. Needs a small anchoring/layout system so custom positions
       survive resizes + the different screen sizes above. Big on mobile where
       thumb reach + button size vary a lot per device.
+    - **BACKLOG - BETTER MAIN-MENU SCREEN (user):** redesign the start screen to
+      look more polished (title treatment, the mode buttons, layout, maybe a
+      background/art or animated arena preview) instead of the current plain
+      centered stack. AND remove em dashes from all UI/menu copy (user
+      preference - use commas, colons, or hyphens), e.g. the Arena mode-button
+      subtitle "Open-world FFA - level up, loot parts off wrecks".
+    - DONE (2026-07-09): the LEVEL-UP / SPEND-POINTS panel now docks top-left
+      under the LVL/HP HUD (loadout panel pushed below it). See changelog.
+    - **BACKLOG - DIFFERENT CROSSHAIR (user):** replace the OS cursor with a
+      custom in-game crosshair for aiming (the player aims shots + hook with the
+      mouse now). Ideas: a reticle that follows the cursor, maybe reflecting
+      weapon/state (e.g. spread ring, on-cooldown/ready tint, hook-range
+      indicator). Hide the OS cursor over the canvas while playing.
+    - DONE (2026-07-09): FILL THE SCREEN + FULLSCREEN. Arena now AREA-LOCKS the
+      viewport to the window aspect ratio (`VIEW` in utils.js, set by `fit()`):
+      fills edge-to-edge with no black bars on 16:10 / ultrawide / resized
+      windows, while the visible world AREA stays constant so no monitor sees
+      more (fair - chosen over the io-game "see more" model on purpose). Extreme
+      aspects (outside 4:3..21:9) letterbox. Gauntlet stays fixed 1280x720.
+      FULLSCREEN toggle added to Options (Fullscreen API, ON/OFF, remembered).
+      See changelog. STILL OPEN below: the broader different-screen-sizes audit
+      (tiny phones / big tablets / hit-target sizes) + UI scale/reposition.
 
 12. **Monetization hooks (mode-specific)**
     - Rewarded ad → starting-XP head-start (the death-reset is the natural ad

@@ -146,6 +146,117 @@ function ramDamageMul(car, isPrimaryRam, charging, hitX, hitY, srcType, source) 
   return 0.65; // 35% shrugged off otherwise
 }
 
+// --- WHEEL DISMEMBERMENT (user spec, 2026-07-09) -----------------------------
+// Every arena car carries FOUR individual wheels (FL/FR/RL/RR components). A
+// BULLET chips only the ONE wheel closest to the hit; an EXPLOSION (mine/slam)
+// chips the TWO closest (user spec). The wheels synthesize the Gauntlet's
+// leftWheels/rightWheels side pools (`syncWheelSides`) so Car.integrate applies
+// its veer/grip/accel/fishtail penalties unchanged: a side's effect = the
+// AVERAGE of its two wheels' damage factors (one broken wheel = half the side
+// penalty). Wheels MEND after WHEEL_REPAIR_DELAY seconds without taking ANY
+// damage, healing over WHEEL_REPAIR_TIME with a visible indicator. The tires
+// PART still drops as loot on a full kill — broken wheels stay bolted on
+// (user call: a debuff, not a loot pinata).
+const WHEEL_KEYS = ["wheelFL", "wheelFR", "wheelRL", "wheelRR"];
+const WHEEL_HP_BASE = 21;      // per-WHEEL pool floor
+const WHEEL_HP_TIER = 7;       // + per tires tier (tier+1): 28 common → 56 legendary = EXACTLY 2x (user)
+const WHEEL_CHIP = 0.4;        // fraction of the dealt damage that also chews wheels
+const WHEEL_REPAIR_DELAY = 10; // seconds without damage before wheels start mending
+const WHEEL_REPAIR_TIME = 4;   // seconds to mend a fully-broken wheel once started
+
+// a wheel's position in the car's LOCAL frame (front = +x, left = -y) — shared
+// by the closest-wheel damage pick and the renderer
+function wheelLocalPos(car, key) {
+  return {
+    x: (key[5] === "F" ? 1 : -1) * car.length * 0.32,
+    y: (key[6] === "L" ? -1 : 1) * car.width / 2,
+  };
+}
+function wheelWorldPos(car, key) {
+  const l = wheelLocalPos(car, key);
+  const c = Math.cos(car.heading), s = Math.sin(car.heading);
+  return { x: car.x + l.x * c - l.y * s, y: car.y + l.x * s + l.y * c };
+}
+
+// fold the four wheels into the two side components Car.integrate reads: the
+// side's damage factor = average of its two wheels' factors, inverted back
+// into an hp value (damageFactor is t² with t=(0.5-ratio)/0.5, so ratio =
+// 0.5·(1-√d)). One broken wheel ≈ half the old full-side penalty.
+function syncWheelSides(car) {
+  const df = (k) => {
+    const c = car.components[k];
+    const t = clamp((0.5 - c.hp / c.max) / 0.5, 0, 1);
+    return t * t;
+  };
+  for (const [side, f, r] of [["leftWheels", "wheelFL", "wheelRL"], ["rightWheels", "wheelFR", "wheelRR"]]) {
+    const d = (df(f) + df(r)) / 2;
+    const max = car.components[f].max + car.components[r].max;
+    // ratio 0.5 already means "zero effect" to damageFactor AND the fishtail
+    // ramp, so healthy sides sit exactly at the no-penalty threshold
+    car.components[side] = { hp: max * 0.5 * (1 - Math.sqrt(d)), max };
+  }
+}
+
+// (re)size a car's wheel pools from its tires tier. Damage FRACTION carries
+// across a re-tier (equipping better tires mid-fight doesn't heal you).
+function setupWheels(car, tier) {
+  const max = WHEEL_HP_BASE + WHEEL_HP_TIER * ((tier || 0) + 1);
+  for (const k of WHEEL_KEYS) {
+    const c = car.components[k];
+    const frac = c ? clamp(c.hp / c.max, 0, 1) : 1;
+    car.components[k] = { hp: max * frac, max };
+  }
+  if (car.sinceHit === undefined) car.sinceHit = WHEEL_REPAIR_DELAY; // fresh car: not "in combat"
+  syncWheelSides(car);
+}
+
+function healWheelsFull(car) {
+  for (const k of WHEEL_KEYS) {
+    const c = car.components[k];
+    if (c) c.hp = c.max;
+  }
+  car.sinceHit = WHEEL_REPAIR_DELAY;
+  if (car.components.wheelFL) syncWheelSides(car);
+}
+
+// a hit with a known position chews wheels by how close it landed (user spec):
+// BULLETS (and point contacts) chip only the CLOSEST wheel; EXPLOSIONS
+// (mine/slam) chip the TWO closest, splitting the chip between them.
+// `dealt` is the post-reduction damage (same number the hull lost).
+function chipWheels(car, dealt, hitX, hitY, srcType) {
+  if (hitX === undefined || hitX === null || dealt <= 0) return;
+  if (!car.components.wheelFL) return; // portraits/stubs without wheel pools
+  const byDist = WHEEL_KEYS
+    .map((k) => { const w = wheelWorldPos(car, k); return { k, d: dist(hitX, hitY, w.x, w.y) }; })
+    .sort((a, b) => a.d - b.d);
+  if (srcType === "mine" || srcType === "slam") { // explosion: 2 closest, split
+    car.damageComponent(byDist[0].k, dealt * WHEEL_CHIP * 0.5);
+    car.damageComponent(byDist[1].k, dealt * WHEEL_CHIP * 0.5);
+  } else { // bullet/crash/hook: the single closest wheel
+    car.damageComponent(byDist[0].k, dealt * WHEEL_CHIP);
+  }
+  syncWheelSides(car);
+}
+
+// out-of-combat mending: gated on time since the car last took ANY damage
+// (the damage sites zero car.sinceHit), then a steady heal with a flag the
+// renderer uses for the "wheels mending" indicator. `delay` lets the caller
+// shorten the gate (the player's REGEN stat trims 0.5s per point — user).
+function tickWheelRepair(car, dt, delay = WHEEL_REPAIR_DELAY) {
+  if (!car.components.wheelFL) return;
+  car.sinceHit = (car.sinceHit ?? WHEEL_REPAIR_DELAY) + dt;
+  car.wheelMending = false;
+  if (car.sinceHit < Math.max(1, delay)) return;
+  for (const k of WHEEL_KEYS) {
+    const c = car.components[k];
+    if (c.hp < c.max) {
+      c.hp = Math.min(c.max, c.hp + (c.max / WHEEL_REPAIR_TIME) * dt);
+      car.wheelMending = true;
+    }
+  }
+  if (car.wheelMending) syncWheelSides(car);
+}
+
 class ArenaBot extends Car {
   constructor(x, y, weapon, level, name) {
     super(x, y, rand(0, TAU), { accel: BOT_BASE.accel, maxSpeed: BOT_BASE.maxSpeed, turnRate: 2.5, grip: 7, drag: 0.6 });
@@ -159,6 +270,7 @@ class ArenaBot extends Car {
     this.name = name || pick(BOT_NAMES);
     this.fireTimer = rand(0.4, 1.4);
     this.hookCd = rand(1, HOOK_CD); // minelayer hook cooldown (staggered so they don't all fire at once)
+    this.playerSeenT = 0;           // continuous time visible on the player's screen (attack gate)
     this.stunT = 0;                 // >0 = hooked/reeled → can't shoot (set by the hook)
     this.ramCharge = 0; this.ramBoostT = 0; this.ramLaunchStr = 1;
     this.lootChannel = 0;                // seconds spent sitting over a part drop
@@ -181,6 +293,8 @@ class ArenaBot extends Car {
       ramPatience: rand(0.7, 1.3),                 // seconds off-nose before braking to turn
       ramSnapChance: rand(0.45, 0.8),              // odds a misalignment triggers a handbrake nose-cut
       aimErr: rand(0.02, 0.05),                    // per-shot aim scatter (~1-3°): marksmen vs sprayers
+      hookErr: rand(0.08, 0.18),                   // per-HOOK scatter (~5-10°): hooks miss a lot more than guns (user)
+      reactionT: rand(0.2, 0.55),                  // human-ish reflex: delay before attacking a player who just came on screen (user)
       lead: rand(0.8, 1.1),                        // lead multiplier around the SMART prediction (under/over-leaders)
       fireArc: rand(1.2, 1.6),                     // will-shoot cone (narrowed, user): only fire when reasonably lined up, not spraying sideways
       sticky: rand(0.75, 0.95),                    // target loyalty: duelists vs opportunists
@@ -248,6 +362,7 @@ class ArenaBot extends Car {
     this.grip = 7 + 1.0 * tt;
     this.turnRate = 2.5 + 0.08 * tt;
     this.handbrakeBoost = 1.3 + 0.10 * tt;                     // sharper drift per tier (base 1.3)
+    setupWheels(this, L.tires ? L.tires.tier : 0);             // left/right wheel pools (dismemberment)
     const at = L.armor ? L.armor.tier + 1 : 0;                 // armor part → HP + reduction
     const newMax = 80 + this.level * 20 + this.stats.health * 25 + 20 * at;
     const inc = newMax - (this.maxHp || newMax);
@@ -385,6 +500,13 @@ class ArenaBot extends Car {
 
   update(dt, game) {
     if (this.stunT > 0) this.stunT -= dt; // hooked → stunned (can't shoot), ticks down after the reel
+    tickWheelRepair(this, dt);            // wheels mend after 10s without a hit
+    // attack-gate tracking (user): how long I've been CONTINUOUSLY visible on
+    // the player's screen (logical 1280x720 rect). Off-screen resets it, so
+    // every re-entry pays the reaction delay again.
+    const pOnScreen = !game.dead &&
+      Math.abs(game.player.x - this.x) < WORLD.w / 2 && Math.abs(game.player.y - this.y) < WORLD.h / 2;
+    this.playerSeenT = pOnScreen ? this.playerSeenT + dt : 0;
     if (this.grudgeT > 0) { this.grudgeT -= dt; if (this.grudgeT <= 0) this.grudge = null; }
     if (this.flipCd > 0) this.flipCd -= dt;
     if (this.boredT > 0) { this.boredT -= dt; if (this.boredT <= 0) this.boredOf = null; }
@@ -434,12 +556,22 @@ class ArenaBot extends Car {
     // minelayer bots HOOK a car into their minefield (user: bots too). Fires in
     // the target's direction independent of the nose; gated by range + cooldown.
     if (this.hookCd > 0) this.hookCd -= dt;
-    // hook a car (drag it into your field) OR the central boss (drag YOURSELF in)
-    if (this.weapon === "minelayer" && engaged && this.hookCd <= 0 && td < HOOK_MAX_LEN && this.stunT <= 0) {
+    // hook a car (drag it into your field) OR the central boss (drag YOURSELF in).
+    // FAIRNESS GATE (user): a bot only THROWS a hook when it would be ON the
+    // target's screen — within a viewport-sized rect centered on the target
+    // (logical 1280x720, so it's deterministic regardless of window shape).
+    // No getting hooked by a car you can't even see.
+    const onTargetScreen = engaged &&
+      Math.abs(target.x - this.x) < WORLD.w / 2 && Math.abs(target.y - this.y) < WORLD.h / 2;
+    if (this.weapon === "minelayer" && engaged && onTargetScreen && this.hookCd <= 0 && td < HOOK_MAX_LEN &&
+        this.stunT <= 0 && this.attackGate(game, target)) {
       // LEAD the hook at where the target will be (same predictor as their shots,
-      // with the hook's tier-scaled travel speed) so it lands on a moving car
+      // with the hook's travel speed) so it lands on a moving car — then smear it
+      // with a per-shot SCATTER much sloppier than gun aim (user: bots should
+      // miss hooks more; persona.hookErr = marksmen vs flailers, seeded)
       const hp = arenaAimPoint(this, target, game.hookSpeedOf(this), this.persona.lead);
-      if (game.fireHook(this, Math.atan2(hp.y - this.y, hp.x - this.x))) this.hookCd = game.hookCooldown(this.stats.reload);
+      const ang = Math.atan2(hp.y - this.y, hp.x - this.x) + rand(-1, 1) * this.persona.hookErr;
+      if (game.fireHook(this, ang)) this.hookCd = game.hookCooldown(this.stats.reload);
     }
 
     // duel clock: time spent fighting THIS opponent (drives escalation) + time
@@ -615,6 +747,21 @@ class ArenaBot extends Car {
         }
       } else {
         this.lootChannel = 0;
+        // LOOT CRATE (user): a crate on the bot's SCREEN beats scrap every
+        // time (same logical-viewport rect as the hook gate). Drive THROUGH it
+        // at speed — contact smashes it open (no arrival braking on purpose).
+        let crate = null, crd = 1e9;
+        for (const c of game.crates || []) {
+          if (c.dead || c === this.boredOf) continue;
+          if (Math.abs(c.x - this.x) > WORLD.w / 2 || Math.abs(c.y - this.y) > WORLD.h / 2) continue;
+          const cd0 = dist(this.x, this.y, c.x, c.y);
+          if (cd0 < crd) { crd = cd0; crate = c; }
+        }
+        if (crate) {
+          this.lastFocus = crate;
+          ({ steer, throttle, hb } = this.navTo(crate.x, crate.y, Math.max(crd, 420)));
+          if (crd > 300) steer = clamp(steer + weave * 0.7, -1, 1);
+        } else {
         // farm: navigate to the nearest scrap pile, then PARK on it to drain
         // (don't drive through — that's the sudden-stop-then-bolt behavior)
         let best = null, bd = 1e9;
@@ -640,6 +787,7 @@ class ArenaBot extends Car {
             }
           }
         } else { this.lastFocus = null; throttle = 0.5; steer = weave; } // idle cruise wanders apart too
+        } // (close the crate-else: crate seek replaced scrap farming this frame)
       }
     }
 
@@ -648,7 +796,8 @@ class ArenaBot extends Car {
     // wind-ups while walking away from a given-up loop.
     // don't wind up a charge while merely holding at a non-vulnerable Magnet's
     // edge — the ram waits for the overload before committing
-    const ramEngaged = engaged && !escaping && !(magnetTarget && !magnetVuln) && this.stunT <= 0;
+    const ramEngaged = engaged && !escaping && !(magnetTarget && !magnetVuln) && this.stunT <= 0 &&
+      this.attackGate(game, target); // no wind-ups on a player who can't see you yet
     if (this.weapon === "ram") this.updateRam(dt, ramEngaged, ramAim);
     else this.boost = 1;
     this.chargingRam = this.weapon === "ram" && ramLaunchingFast(this, this.ramBoostT); // launched + moving → frontal-crash checks
@@ -681,7 +830,8 @@ class ArenaBot extends Car {
 
     // ranged weapons fire toward the current target (RELOAD shortens the interval)
     this.fireTimer -= dt;
-    if (wantFire && target && this.fireTimer <= 0 && this.weapon !== "ram" && this.stunT <= 0) { // stunned → can't shoot
+    if (wantFire && target && this.fireTimer <= 0 && this.weapon !== "ram" && this.stunT <= 0 &&
+        this.attackGate(game, target)) { // player must be able to SEE the attacker (+ reaction time)
       // acceleration-aware lead (arenaAimPoint — the Gauntlet gunner's model):
       // distance sets flight time, along-track accel + typical-speed regression
       // set the travel. persona.lead scales it (under/over-leaders) and every
@@ -714,9 +864,25 @@ class ArenaBot extends Car {
         this.fireTimer = 1.6 / this.reloadMul();
         const f = this.forward;
         game.mines.push({ x: this.x - f.x * 26, y: this.y - f.y * 26, owner: this, arm: 1.0, age: 0, dmg: game.mineDamageOf(this), dead: false });
+      } else if (this.weapon === "railgun") {
+        // looted sniper: a single led slug when lined up, then a long reload
+        this.fireTimer = 2.6 / this.reloadMul();
+        const rp = arenaAimPoint(this, target, RAIL_SPEED, this.persona.lead);
+        const rang = Math.atan2(rp.y - this.y, rp.x - this.x) + rand(-this.persona.aimErr, this.persona.aimErr);
+        game.fireRailgun(this, rang, this.loadout.weapon.tier);
       }
     }
     if (this.hitFlash > 0) this.hitFlash -= dt;
+  }
+
+  // ATTACK GATE (user): a bot may only attack the PLAYER when it would be
+  // visible on the player's screen (logical 1280x720 rect — same convention as
+  // the hook gate) AND after a human-ish reaction delay: playerSeenT tracks
+  // continuous on-screen time (ticked in update), persona.reactionT is the
+  // per-bot reflex roll. Attacks on bots/bosses are ungated.
+  attackGate(game, target) {
+    if (target !== game.player) return true;
+    return this.playerSeenT >= this.persona.reactionT;
   }
 
   // would this part be a straight tier upgrade for my loadout?
@@ -750,7 +916,8 @@ class ArenaBot extends Car {
   updateRam(dt, engaged, aimToP) {
     if (this.ramBoostT > 0) { this.ramBoostT -= dt; this.boost = this.ramBoostT > 0 ? this.ramLaunchStr : 1; return; }
     if (engaged && Math.abs(aimToP) < 0.4) {
-      this.ramCharge = Math.min(1, this.ramCharge + dt / 0.7);
+      // RELOAD speeds the wind-up (same rule as the player's ram)
+      this.ramCharge = Math.min(1, this.ramCharge + dt * this.reloadMul() / 0.7);
       this.boost = 0.6;
       if (this.ramCharge >= 1) { this.ramLaunchStr = 2.4; this.ramBoostT = 0.8; this.ramCharge = 0; }
     } else { this.ramCharge = Math.max(0, this.ramCharge - dt); this.boost = 1; }
@@ -761,7 +928,10 @@ class ArenaBot extends Car {
     // IS their primary). A fully-shrugged hit still registers a grudge below
     // (the bot reacts to being shot at even when it tanks the damage).
     amount *= ramDamageMul(this, this.weapon === "ram", ramLaunchingFast(this, this.ramBoostT), hitX, hitY, srcType, source);
-    this.hp -= amount / (1 + (this.partDmgReduce || 0)); // ARMOR part reduction
+    const dealt = amount / (1 + (this.partDmgReduce || 0)); // ARMOR part reduction
+    this.hp -= dealt;
+    chipWheels(this, dealt, hitX, hitY, srcType); // bullets chew the closest wheel, blasts the closest two
+    if (amount > 0) this.sinceHit = 0;    // any real hit stalls the wheel mend
     this.hitFlash = 0.12;
     // remember the attacker (hurtCar sets lastHitBy just before calling us) —
     // retaliation: they jump the targeting queue for a few seconds

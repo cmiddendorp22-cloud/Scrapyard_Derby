@@ -19,6 +19,15 @@ const LEVEL_CAP = 30;
 const STAT_CAP = 10;              // max points per stat
 const SCRAP_TARGET = 180;         // world stays topped up to this many piles
 const XP_PER_SCRAP = 1;           // XP per unit of scrap absorbed
+const SCRAP_HEAL_FRAC = 0.03;     // a FULL pile absorbed heals 3% of maxHp (pro-rata partial)
+// LOOT CRATES (user): destructible boxes scattered around the map so roaming
+// pays off — crack one open (bullets or a moving car) for a LOW-tier part.
+const CRATE_COUNT = 7;            // crates alive on the map at once
+const CRATE_HP = 2;               // bullet hits to crack one
+const CRATE_R = 16;               // crate body radius
+const CRATE_BREAK_SPEED = 60;     // a car touching faster than this smashes it
+const CRATE_RESPAWN_MIN = 30;     // seconds until a broken crate respawns...
+const CRATE_RESPAWN_MAX = 60;     // ...somewhere else (seeded roll)
 const REGEN_DELAY = 5;            // seconds out of combat before health regen kicks in
 const REGEN_BASE = 0.02;          // 2% of maxHp per second, +0.5%/REGEN point
 const BOUNTY_XP = 150;            // bonus XP for wrecking the current #1 (leader bounty)
@@ -42,8 +51,14 @@ const HOOK_REEL_TIME = 1.2;      // reel a grabbed car/self in over this long (s
 const HOOK_STUN_AFTER = 0.5;     // a hooked car stays stunned (can't shoot) this long after the reel
 const HOOK_DAMAGE = 15;          // small chip on the grab (user: pulled + small damage)
 const HOOK_HEAD_R = 12;          // grab radius of the hook head
+// -- RAILGUN (loot-only sniper, user): fire a PIERCING slug, then a long reload --
+const RAIL_DMG = 97.5;           // slug damage before tier scaling (user: halved from 195)
+const RAIL_SPEED = 2200;         // slug speed (user: a lot quicker — near-hitscan feel)
+const RAIL_LIFE = 1.0;           // slug lifetime (~2200px reach)
+const RAIL_CD = 2.2;             // reload between shots (shortened by RELOAD; no charge-up — user)
+const RAIL_STRENGTH = 3;         // pierce/clash budget: cars cost 1, scrap 1.5, boss absorbs
 const STREAK_MILESTONES = [3, 5, 8]; // wreck-streak counts that trigger a RAMPAGE callout (then every +5)
-const SLOT_UNLOCKS = { 5: "armor" }; // level → slot unlocked (weapon2 is open from L1 — user call)
+const SLOT_UNLOCKS = { 5: "armor" }; // level → slot unlocked (single weapon slot for now — user)
 const BOT_COUNT = 8;             // bots kept alive in the world
 const BOT_RESPAWN = 3.5;         // seconds before a wrecked bot returns
 
@@ -85,7 +100,7 @@ class ArenaGame {
     this.xp = 0;
     this.statPoints = 0;
     this.stats = { health: 0, speed: 0, reload: 0, regen: 0 };
-    this.slots = { armor: false }; // weapon2 needs no unlock — open from L1
+    this.slots = { armor: false }; // ONE weapon slot for now (user, 2026-07-09)
     this.maxHp = 100;
     this.hp = 100;
     this.outOfCombat = 0;             // seconds since last damage (regen gate)
@@ -101,6 +116,8 @@ class ArenaGame {
     this.ramCharge = 0;               // 0..1 while holding
     this.ramBoostT = 0;               // remaining launch-boost time
     this.ramLaunchStr = 1;            // Car.boost applied during the launch
+    // railgun (loot-only): a piercing slug on FIRE with a long reload
+    this.railCd = 0;                  // reload after a shot
     // combat
     this.bots = [];
     this.botRespawns = [];            // {t} timers for wrecked bots
@@ -145,6 +162,8 @@ class ArenaGame {
     this.cam = { x: this.player.x, y: this.player.y };
     this.scrap = [];
     this.scatterScrap(SCRAP_TARGET);
+    this.crates = [];
+    this.scatterCrates();
     this.bots = [];
     for (let i = 0; i < BOT_COUNT; i++) this.spawnBot();
     // central boss (the map's gravity well) — the Junk Titan leads (its
@@ -204,6 +223,14 @@ class ArenaGame {
     if (this.level >= LEVEL_CAP) this.xp = 0; // maxed — bar sits full
   }
 
+  // absorbing scrap also heals the player: a FULL pile = SCRAP_HEAL_FRAC of
+  // maxHp, pro-rata for a partial absorption (drive-over or shoot-to-harvest).
+  healFromScrap(drain, maxAmount) {
+    if (this.dead || this.hp <= 0 || this.hp >= this.maxHp || maxAmount <= 0) return;
+    const heal = this.maxHp * SCRAP_HEAL_FRAC * (drain / maxAmount);
+    this.hp = Math.min(this.maxHp, this.hp + heal);
+  }
+
   levelUp() {
     this.level++;
     this.statPoints++;
@@ -243,6 +270,7 @@ class ArenaGame {
     this.player.grip = 7 + 1.0 * tt;
     this.player.turnRate = 2.9 + 0.08 * tt;
     this.player.handbrakeBoost = 1.3 + 0.10 * tt;
+    setupWheels(this.player, L.tires ? L.tires.tier : 0); // left/right wheel pools (dismemberment)
     // HEALTH stat + ARMOR part → max HP; ARMOR alone → damage cut (the
     // DURABILITY stat was removed — per-tier value doubled to compensate)
     const at = L.armor ? L.armor.tier + 1 : 0;
@@ -258,14 +286,19 @@ class ArenaGame {
       tires: makePart("tires", "tires", 0),
       engine: makePart("engine", "engine", 0),
       weapon1: makePart("weapon", weaponType || "cannon", 0),
-      weapon2: null,
+      weapon2: null, // DORMANT: single weapon slot for now (user, 2026-07-09)
       armor: makePart("armor", "armor", 0),
     };
   }
 
   hasRam() {
     const L = this.loadout;
-    return !!(L && ((L.weapon1 && L.weapon1.type === "ram") || (L.weapon2 && L.weapon2.type === "ram")));
+    return !!(L && L.weapon1 && L.weapon1.type === "ram");
+  }
+
+  hasRailgun() {
+    const L = this.loadout;
+    return !!(L && L.weapon1 && L.weapon1.type === "railgun");
   }
 
   banner(text, sub) {
@@ -273,51 +306,52 @@ class ArenaGame {
     if (this.banners.length > 3) this.banners.shift();
   }
 
-  // -- weapons: primary/secondary INPUT MODEL (user, scalable) ----------------
-  // Each weapon declares an ABILITY (a deliberate action) if it has one:
-  //   • ram → CHARGE (a HOLD ability — coexists with spammable fire on left)
-  //   • minelayer → HOOK (a click/aimed ability — CLAIMS its slot's click)
-  //   • cannon/shotgun → none (spammable shot only)
-  // Spammable actions (cannon/shotgun shots, minelayer mines) fire on the FIRE
-  // channel = auto-fire toggle / touch FIRE / left-click (unless left-click is
-  // claimed by a primary click-ability, i.e. a primary minelayer's hook — then
-  // spammables are auto-fire only, which is why "mines are on auto-fire" there).
-  // Abilities bind by slot: PRIMARY → left-click, SECONDARY → right-click (touch
-  // gets one ABILITY button per slot). Add a weapon here and it slots in.
+  // -- weapons: SINGLE-SLOT input model (user, 2026-07-09: one weapon slot for
+  // now — dual slots may return later, so `weapon1` keeps its name and
+  // `weapon2` stays a dormant null). Each weapon declares an ABILITY if it has
+  // one:
+  //   • ram → CHARGE (hold LEFT-click to wind up, release to launch)
+  //   • minelayer → HOOK (RIGHT-click, aimed at the cursor)
+  //   • cannon/shotgun/railgun → none (FIRE-channel only; the railgun is just
+  //     a slow, piercing FIRE weapon with a long reload — no charge, user)
+  // Spammables fire on the FIRE channel (left-click / F auto-fire toggle /
+  // touch FIRE). HOLD abilities live on left-click too (their weapon has no
+  // spammable, so left is free); the hook is a CLICK ability on RIGHT-click so
+  // mines keep left. Touch gets ONE ability button. Add a weapon + its entry
+  // here and it slots in.
   weaponAbility(type) {
     if (type === "ram") return { name: "CHARGE", hold: true };
     if (type === "minelayer") return { name: "HOOK", hold: false };
-    return null; // cannon / shotgun: spammable only
+    return null; // cannon / shotgun / railgun: FIRE-channel only
   }
 
   // resolve the raw inputs into this frame's channels, given the loadout
   resolvePlayerInputs() {
-    const L = this.loadout, inp = this.input;
-    const primAb = this.weaponAbility(L.weapon1 && L.weapon1.type);
-    const leftClaimed = !!(primAb && !primAb.hold); // a primary CLICK ability (hook) claims left-click
-    // FIRE channel drives spammables. When left-click is claimed by a primary
-    // click-ability, drop it (mines/spammables → auto-fire toggle / touch FIRE).
-    this._fireActive = leftClaimed ? (inp.autoFire || inp.touchFire) : inp.fire;
-    this._primHeld = inp.mouseDown || inp.touchAbility1; // primary ability → left-click
-    this._secHeld = inp.hookHeld || inp.touchAbility2;   // secondary ability → right-click
-    // which slot's channel drives the ram charge / the hook (null = not equipped)
-    this._ramSlot = L.weapon1 && L.weapon1.type === "ram" ? "p" : (L.weapon2 && L.weapon2.type === "ram" ? "s" : null);
-    this._hookSlot = L.weapon1 && L.weapon1.type === "minelayer" ? "p" : (L.weapon2 && L.weapon2.type === "minelayer" ? "s" : null);
+    const inp = this.input;
+    const w = this.loadout && this.loadout.weapon1;
+    const ab = this.weaponAbility(w && w.type);
+    this._fireActive = inp.fire; // spammables: left-click / auto-fire / touch FIRE
+    // the ability channel: HOLD abilities read the left button (+ touch ability
+    // button); CLICK abilities (hook) read the right button (+ touch button)
+    this._abilityHeld = ab
+      ? (ab.hold ? (inp.mouseDown || inp.touchAbility1) : (inp.hookHeld || inp.touchAbility1))
+      : false;
   }
 
-  // RAM: HOLD its slot input to CHARGE (dig in / wind up), release to LAUNCH a
-  // boost scaled by hold time — primary = left-click, secondary = right-click.
-  // Runs BEFORE integrate (sets the Car.boost the physics reads).
+  // RAM: HOLD left-click to CHARGE (dig in / wind up), release to LAUNCH a
+  // boost scaled by hold time. Runs BEFORE integrate (sets the Car.boost the
+  // physics reads).
   updateRam(dt) {
     this.resolvePlayerInputs();
     const p = this.player;
-    const held = this._ramSlot === "p" ? this._primHeld : this._ramSlot === "s" ? this._secHeld : false;
-    if (!this._ramSlot || this.player.stunT > 0) { p.boost = 1; p.chargingRam = false; if (this.ramBoostT > 0) this.ramBoostT -= dt; return; }
+    const held = this.hasRam() ? this._abilityHeld : false;
+    if (!this.hasRam() || this.player.stunT > 0) { p.boost = 1; p.chargingRam = false; if (this.ramBoostT > 0) this.ramBoostT -= dt; return; }
     if (this.ramBoostT > 0) {                 // mid-launch: strong boost, timed
       this.ramBoostT -= dt;
       p.boost = this.ramBoostT > 0 ? this.ramLaunchStr : 1;
     } else if (held) {                         // holding: wind up + build charge
-      this.ramCharge = Math.min(1, this.ramCharge + dt / 0.8); // ~0.8s to full
+      // RELOAD speeds the wind-up (the ram's version of a faster fire rate)
+      this.ramCharge = Math.min(1, this.ramCharge + dt * (1 + this.stats.reload * 0.08) / 0.8); // ~0.8s to full at reload 0
       p.boost = 0.5;                           // dig in — slow while charging
     } else if (this.ramCharge > 0.12) {        // released with charge → LAUNCH
       this.ramLaunchStr = 1.6 + this.ramCharge * 1.0; // up to 2.6x
@@ -330,8 +364,8 @@ class ArenaGame {
       p.boost = 1;
     }
     // mirror "actively ramming" onto the player CAR (ramDamageMul/isChargingRam
-    // read it). Frontal defense is PRIMARY-ram only, launched + moving.
-    p.chargingRam = this._ramSlot === "p" && ramLaunchingFast(p, this.ramBoostT);
+    // read it): launched + moving. Single slot = the ram is always primary.
+    p.chargingRam = ramLaunchingFast(p, this.ramBoostT);
   }
 
   // Raw FULL-CIRCLE angle from the player to the mouse cursor (any direction),
@@ -343,10 +377,10 @@ class ArenaGame {
     if (this.touchMode || !inp || !inp.hasMouse || !this.canvas.getBoundingClientRect) return null;
     const rect = this.canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
-    const lx = ((inp.mouseX - rect.left) / rect.width) * WORLD.w;   // → logical screen x (0..1280)
-    const ly = ((inp.mouseY - rect.top) / rect.height) * WORLD.h;   // → logical screen y (0..720)
-    const wx = lx - WORLD.w / 2 + this.cam.x;                       // → world (undo camera translate)
-    const wy = ly - WORLD.h / 2 + this.cam.y;
+    const lx = ((inp.mouseX - rect.left) / rect.width) * VIEW.w;    // → logical screen x (0..VIEW.w)
+    const ly = ((inp.mouseY - rect.top) / rect.height) * VIEW.h;    // → logical screen y (0..VIEW.h)
+    const wx = lx - VIEW.w / 2 + this.cam.x;                        // → world (undo camera translate)
+    const wy = ly - VIEW.h / 2 + this.cam.y;
     return Math.atan2(wy - p.y, wx - p.x);
   }
 
@@ -360,16 +394,16 @@ class ArenaGame {
     return this.player.heading + clamp(angleDiff(want, this.player.heading), -AIM_CONE, AIM_CONE);
   }
 
-  // Fire BOTH equipped weapons on FIRE, each on its own cooldown. Tier scales
-  // damage + fire rate; RELOAD stat also shortens the interval. Ram weapons are
-  // handled in updateRam (they charge instead of firing here).
+  // Fire the equipped weapon on FIRE. Tier scales damage + fire rate; RELOAD
+  // stat also shortens the interval. Ram charges in updateRam and the railgun
+  // in updateRailgun (hold abilities — they don't fire here).
   updateWeapon(dt) {
     this.resolvePlayerInputs();
     const reloadMul = 1 + this.stats.reload * 0.08;
-    for (const w of [this.loadout.weapon1, this.loadout.weapon2]) {
+    for (const w of [this.loadout.weapon1]) {
       if (!w) continue;
       w.cd = (w.cd || 0) - dt;
-      if (w.type === "ram") continue;
+      if (w.type === "ram" || w.type === "railgun") continue;
       if (!this._fireActive || w.cd > 0 || this.player.stunT > 0) continue; // spammables on the FIRE channel; stunned → can't fire
       const t = w.tier + 1, dmul = 1 + 0.12 * t, rate = reloadMul * (1 + 0.10 * t);
       const p = this.player, f = p.forward;
@@ -418,7 +452,7 @@ class ArenaGame {
   // right-click (toward the cursor) on desktop, a HOOK button on touch. --------
   hasMinelayer() {
     const L = this.loadout;
-    return !!(L && ((L.weapon1 && L.weapon1.type === "minelayer") || (L.weapon2 && L.weapon2.type === "minelayer")));
+    return !!(L && L.weapon1 && L.weapon1.type === "minelayer");
   }
 
   // touch has no cursor → aim the hook at the nearest car within reach (else nose)
@@ -441,14 +475,46 @@ class ArenaGame {
   updatePlayerHook(dt) {
     this.resolvePlayerInputs();
     if (this.hookCd > 0) this.hookCd -= dt;
-    // the hook fires on the minelayer's SLOT channel (primary=left, secondary=right)
-    const held = this._hookSlot === "p" ? this._primHeld : this._hookSlot === "s" ? this._secHeld : false;
-    if (!this._hookSlot || !held || this.hookCd > 0 || this.player.stunT > 0) return; // stunned → no hook
+    // the hook fires on the ability channel (right-click / touch ability button)
+    if (!this.hasMinelayer() || !this._abilityHeld || this.hookCd > 0 || this.player.stunT > 0) return; // stunned → no hook
     // FULL-CIRCLE toward the cursor (no forward-cone clamp — user); touch auto-aims
     let ang;
     if (this.touchMode) ang = this.hookAutoAim(this.player);
     else { ang = this.mouseWorldAngle(); if (ang === null) ang = this.player.heading; }
     if (this.fireHook(this.player, ang)) this.hookCd = this.hookCooldown(this.stats.reload);
+  }
+
+  // RAILGUN (loot-only): fires a PIERCING slug on the FIRE channel — no
+  // charge-up (user), just a long RELOAD between shots (strength budget:
+  // cars 1, scrap piles 1.5, mines/crates 1, the boss absorbs it).
+  updateRailgun(dt) {
+    if (this.railCd > 0) this.railCd -= dt;
+    if (!this.hasRailgun()) return;
+    this.resolvePlayerInputs();
+    if (!this._fireActive || this.railCd > 0 || this.player.stunT > 0) return;
+    this.fireRailgun(this.player, this.playerAimAngle(), this.loadout.weapon1.tier);
+    this.railCd = RAIL_CD / (1 + this.stats.reload * 0.08); // RELOAD shortens it
+  }
+
+  // shared player/bot railgun shot. Damage = RAIL_DMG x tier; the slug carries
+  // a STRENGTH budget it spends piercing things (see updateProjectiles).
+  fireRailgun(owner, angle, tier) {
+    const dmg = RAIL_DMG * (1 + 0.12 * ((tier || 0) + 1)) *
+      (owner === this.player ? 1 : 1 + (owner.level || 1) * 0.01); // bots: tiny level scale
+    const b = new Bullet(owner.x + Math.cos(angle) * (owner.length / 2 + 8),
+      owner.y + Math.sin(angle) * (owner.length / 2 + 8), angle, RAIL_SPEED, owner === this.player, dmg);
+    b.life = RAIL_LIFE;
+    b.radius = 5;
+    b.strength = RAIL_STRENGTH;
+    b.pierce = true;
+    b.railgun = true;
+    b.hitSet = new Set(); // things already pierced (no double-damage across frames)
+    b.shooter = owner;
+    this.bullets.push(b);
+    this.particles.sparks(b.x, b.y, angle, 10, 320);
+    owner.vx -= Math.cos(angle) * 90; owner.vy -= Math.sin(angle) * 90; // heavy kick
+    this.audio.playShoot();
+    if (this.audio.playImpact) this.audio.playImpact(0.6); // extra thump
   }
 
   // launch a hook (returns false if the owner already has one out — one at a time)
@@ -475,9 +541,12 @@ class ArenaGame {
         h.hx += Math.cos(h.angle) * spd * dt;
         h.hy += Math.sin(h.angle) * spd * dt;
         h.len += spd * dt;
-        // grab the FIRST car the head reaches (not the owner)
+        // grab the FIRST car the head reaches (not the owner). A ram mid-LAUNCH
+        // is immune to the GRAB (user: ram's counter-pick vs the hook) — the
+        // head passes through it; an already-grabbed ram stays grabbed.
         for (const c of this.cars()) {
           if (c === owner || this.isDeadCar(c)) continue;
+          if (isChargingRam(c)) continue; // launched ram: can't be grabbed
           if (dist(h.hx, h.hy, c.x, c.y) < HOOK_HEAD_R + c.radius) {
             h.state = "reel"; h.target = c; h.reelT = 0;
             this.hurtCar(c, HOOK_DAMAGE, owner, h.hx, h.hy, "hook"); // small chip on the grab
@@ -540,13 +609,12 @@ class ArenaGame {
     this.hooks = this.hooks.filter((h) => !h.dead);
   }
 
-  // the equipped minelayer's tier for a car (player: either weapon slot; bot:
-  // its single weapon), or 0 if none — drives mine damage + hook speed
+  // the equipped minelayer's tier for a car (player: the single weapon slot;
+  // bot: its weapon), or 0 if none — drives mine damage + hook speed
   minelayerTierOf(owner) {
     if (owner === this.player) {
       const L = this.loadout;
-      const w = (L.weapon1 && L.weapon1.type === "minelayer") ? L.weapon1
-        : (L.weapon2 && L.weapon2.type === "minelayer") ? L.weapon2 : null;
+      const w = (L.weapon1 && L.weapon1.type === "minelayer") ? L.weapon1 : null;
       return w ? w.tier : 0;
     }
     return owner.loadout && owner.loadout.weapon ? owner.loadout.weapon.tier : 0;
@@ -620,6 +688,50 @@ class ArenaGame {
     }
   }
 
+  // a RAILGUN slug's frame step: it pierces instead of dying, spending its
+  // STRENGTH budget (user spec) — a whole scrap pile costs 1.5 (so ~2 piles
+  // exhaust it), cars/mines/crates cost 1 each, the boss absorbs it outright.
+  // hitSet dedups multi-frame overlaps so nothing is damaged twice.
+  pierceStep(b) {
+    for (const s of this.scrap) { // drains entire piles it passes over
+      if (s.dead || b.hitSet.has(s) || dist(b.x, b.y, s.x, s.y) >= s.radius * 0.8 + b.radius) continue;
+      b.hitSet.add(s);
+      const drain = s.amount;
+      s.amount = 0; s.dead = true;
+      if (b.fromPlayer) { this.addXp(drain * XP_PER_SCRAP); this.healFromScrap(drain, s.maxAmount); }
+      else if (b.shooter && b.shooter.gainXp) b.shooter.gainXp(drain * XP_PER_SCRAP);
+      this.particles.scrapPuff(s.x, s.y);
+      b.strength -= 1.5;
+    }
+    for (const m of this.mines) { // detonates mines outright (credited to the shooter)
+      if (m.dead || dist(b.x, b.y, m.x, m.y) >= 9 + b.radius) continue;
+      this.detonateMine(m, b.shooter);
+      b.strength -= 1;
+    }
+    for (const c of this.crates) { // smashes crates open on the way through
+      if (c.dead || dist(b.x, b.y, c.x, c.y) >= c.r + b.radius) continue;
+      this.breakCrate(c);
+      b.strength -= 1;
+    }
+    // the boss ABSORBS the slug: full damage, but nothing pierces a boss
+    if (this.boss && !this.boss.dead && b.shooter !== this.boss &&
+        dist(b.x, b.y, this.boss.x, this.boss.y) < this.boss.radius + b.radius) {
+      this.hurtBoss(b.x, b.y, b.damage, b.shooter);
+      this.particles.sparks(b.x, b.y, Math.atan2(b.vy, b.vx) + Math.PI, 10, 260);
+      b.dead = true;
+      return;
+    }
+    for (const car of this.cars()) { // full damage to EACH car in its path, once
+      if (car === b.shooter || this.isDeadCar(car) || b.hitSet.has(car)) continue;
+      if (dist(b.x, b.y, car.x, car.y) >= car.radius + b.radius) continue;
+      b.hitSet.add(car);
+      this.hurtCar(car, b.damage, b.shooter, b.x, b.y, "bullet");
+      this.particles.sparks(b.x, b.y, Math.atan2(b.vy, b.vx) + Math.PI, 8, 220);
+      b.strength -= 1;
+    }
+    if (b.strength <= 0) b.dead = true;
+  }
+
   // FFA bullets: PLAYER shots also harvest scrap; every shot damages any car
   // except its shooter (tracked via b.shooter for kill attribution).
   updateProjectiles(dt) {
@@ -628,6 +740,7 @@ class ArenaGame {
       b.update(dt);
       if (b.dead) continue;
       if (b.x < ARENA.wall || b.x > ARENA.w - ARENA.wall || b.y < ARENA.wall || b.y > ARENA.h - ARENA.wall) { b.dead = true; continue; }
+      if (b.pierce) { this.pierceStep(b); continue; } // railgun slugs spend a strength budget instead of dying
       // shots farm scrap: player bullets → player XP, BOT bullets → that
       // bot's XP (bots shoot-to-farm too; the Titan's shells don't harvest)
       if (b.fromPlayer || (b.shooter && b.shooter.gainXp)) {
@@ -636,7 +749,7 @@ class ArenaGame {
           if (s.dead || dist(b.x, b.y, s.x, s.y) >= s.radius * 0.8) continue;
           const drain = Math.min(b.damage * 0.6, s.amount);
           s.amount -= drain;
-          if (b.fromPlayer) this.addXp(drain * XP_PER_SCRAP);
+          if (b.fromPlayer) { this.addXp(drain * XP_PER_SCRAP); this.healFromScrap(drain, s.maxAmount); }
           else b.shooter.gainXp(drain * XP_PER_SCRAP);
           this.particles.scrapPuff(s.x, s.y);
           if (s.amount <= 0) s.dead = true;
@@ -655,6 +768,16 @@ class ArenaGame {
         b.dead = true; popped = true; break;
       }
       if (popped) continue;
+      // loot crates are SHOOTABLE: CRATE_HP hits crack one open
+      let boxed = false;
+      for (const c of this.crates) {
+        if (c.dead || dist(b.x, b.y, c.x, c.y) >= c.r + b.radius) continue;
+        c.hp -= 1;
+        this.particles.sparks(b.x, b.y, Math.atan2(b.vy, b.vx) + Math.PI, 4, 140);
+        if (c.hp <= 0) this.breakCrate(c);
+        b.dead = true; boxed = true; break;
+      }
+      if (boxed) continue;
       // the Titan takes bullet damage too (any shot but its own)
       if (this.boss && !this.boss.dead && b.shooter !== this.boss &&
           dist(b.x, b.y, this.boss.x, this.boss.y) < this.boss.radius + b.radius) {
@@ -994,6 +1117,9 @@ class ArenaGame {
     if (this.boss && !this.boss.dead && dist(m.x, m.y, this.boss.x, this.boss.y) < 90 + this.boss.radius) {
       this.hurtBoss(m.x, m.y, m.dmg, source);
     }
+    for (const c of this.crates) { // the blast cracks nearby crates open too
+      if (!c.dead && dist(m.x, m.y, c.x, c.y) < 90 + c.r) this.breakCrate(c);
+    }
     this.particles.explosion(m.x, m.y);
     this.audio.playExplosion();
   }
@@ -1039,7 +1165,10 @@ class ArenaGame {
     const ramPrimary = !!(this.loadout && this.loadout.weapon1 && this.loadout.weapon1.type === "ram");
     amount *= ramDamageMul(this.player, ramPrimary, ramLaunchingFast(this.player, this.ramBoostT), hitX, hitY, srcType, source);
     this.outOfCombat = 0; // taking a hit resets the regen timer
-    this.hp -= amount / (1 + this.partDmgReduce); // ARMOR part damage reduction
+    const dealt = amount / (1 + this.partDmgReduce); // ARMOR part damage reduction
+    this.hp -= dealt;
+    chipWheels(this.player, dealt, hitX, hitY, srcType); // bullets chew the closest wheel, blasts the closest two
+    if (amount > 0) this.player.sinceHit = 0;   // any real hit stalls the wheel mend
     if (this.hp <= 0) {
       this.dead = true;
       this.respawnT = 1.2; // brief wreck moment, then the death menu (main.js)
@@ -1094,6 +1223,8 @@ class ArenaGame {
     this.loadout = this.freshLoadout(w);
     this.applyStats();
     this.hp = this.maxHp;
+    healWheelsFull(this.player); // fresh life = fresh wheels
+    this.railCd = 0;
     this.outOfCombat = 0;
     const sp = this.playerSpawn();
     this.player.x = sp.x; this.player.y = sp.y;
@@ -1108,7 +1239,7 @@ class ArenaGame {
   // the highest tier — same weighting bots use in pickDrop (user).
   playerDeathDrop() {
     const L = this.loadout;
-    const parts = [L.tires, L.engine, L.weapon1, L.weapon2, L.armor].filter(Boolean);
+    const parts = [L.tires, L.engine, L.weapon1, L.armor].filter(Boolean);
     if (!parts.length) return null;
     let total = 0; for (const p of parts) total += (p.tier + 1) * (p.tier + 1);
     let r = rand(0, total);
@@ -1142,17 +1273,11 @@ class ArenaGame {
     return this.drops.filter((d) => !d.dead && dist(p.x, p.y, d.x, d.y) <= PICKUP_RANGE);
   }
 
-  // which loadout slot a part would fill: fixed for tires/engine/armor. For
-  // weapons, a drop matching an equipped weapon's TYPE targets THAT slot —
-  // including the primary (user rule: a higher-tier cannon upgrades your
-  // cannon wherever it sits). A new type fills empty-secondary-else-secondary.
+  // which loadout slot a part would fill: fixed for tires/engine/armor; ONE
+  // weapon slot (user, 2026-07-09), so every weapon drop targets it.
   targetSlot(part) {
     if (part.slot !== "weapon") return part.slot;
-    if (this.loadout.weapon1 && this.loadout.weapon1.type === part.type) return "weapon1";
-    if (this.loadout.weapon2 && this.loadout.weapon2.type === part.type) return "weapon2";
-    if (!this.loadout.weapon1) return "weapon1";
-    if (!this.loadout.weapon2) return "weapon2";
-    return "weapon2";
+    return "weapon1";
   }
 
   // a BOT claims a ground part after channeling on it (same single-access
@@ -1171,16 +1296,6 @@ class ArenaGame {
     this.particles.scrapPuff(drop.x, drop.y);
   }
 
-  // swap which weapon is primary vs secondary (both fire, but primary renders
-  // on the car + is the one a new weapon can't auto-replace)
-  swapWeapons() {
-    const L = this.loadout;
-    if (!L.weapon1 || !L.weapon2) return;
-    const t = L.weapon1; L.weapon1 = L.weapon2; L.weapon2 = t;
-    this.startWeapon = L.weapon1.type; // keep the rendered/primary weapon in sync
-    this.banner("PRIMARY: " + partName(L.weapon1), "");
-  }
-
   // compare `part` to what's in its target slot by tier: 1 upgrade / 0 same /
   // -1 downgrade (an empty slot counts as an upgrade)
   slotCompare(part) {
@@ -1196,13 +1311,6 @@ class ArenaGame {
     if (!drop || drop.dead || this.dead) return false;
     if (dist(this.player.x, this.player.y, drop.x, drop.y) > PICKUP_RANGE) return false;
     const slot = this.targetSlot(drop.part);
-    // HARD GUARD (user rule): one weapon TYPE per car — never two cannons/
-    // rams/minelayers. targetSlot's type-matching makes this structurally
-    // unreachable today; the guard keeps future weapons/equip paths honest.
-    if (drop.part.slot === "weapon") {
-      const other = slot === "weapon1" ? this.loadout.weapon2 : this.loadout.weapon1;
-      if (other && other.type === drop.part.type) return false;
-    }
     drop.dead = true; // claim it NOW
     const old = this.loadout[slot];
     this.loadout[slot] = drop.part;
@@ -1240,6 +1348,69 @@ class ArenaGame {
       }
       if (dist(x, y, this.player.x, this.player.y) < 260) continue; // keep spawn clear
       this.scrap.push(new ScrapPile(x, y));
+    }
+  }
+
+  // -- loot crates: roaming reward (user). Crack with bullets or a moving car --
+
+  cratePos() { // a seeded spot away from the center boss, the player's VIEW, and other crates
+    for (let t = 0; t < 24; t++) {
+      const x = rand(ARENA.wall + 120, ARENA.w - ARENA.wall - 120);
+      const y = rand(ARENA.wall + 120, ARENA.h - ARENA.wall - 120);
+      if (dist(x, y, ARENA.w / 2, ARENA.h / 2) < 900) continue;              // not in the boss's yard
+      // never pop into existence where the player can SEE it (user): outside
+      // the view frame — a logical-1280x720 rect on the player + a margin
+      if (Math.abs(x - this.player.x) < WORLD.w / 2 + 80 &&
+          Math.abs(y - this.player.y) < WORLD.h / 2 + 80) continue;
+      if (this.crates.some((c) => !c.dead && dist(x, y, c.x, c.y) < 500)) continue; // spread out
+      return { x, y };
+    }
+    return { x: rand(ARENA.wall + 120, ARENA.w - ARENA.wall - 120), y: rand(ARENA.wall + 120, ARENA.h - ARENA.wall - 120) };
+  }
+
+  scatterCrates() {
+    while (this.crates.length < CRATE_COUNT) {
+      const p = this.cratePos();
+      this.crates.push({ x: p.x, y: p.y, r: CRATE_R, hp: CRATE_HP, dead: false, respawnT: 0, seed: fxRand(0, TAU) });
+    }
+  }
+
+  // crack it open: ALWAYS drops one part a step above starting gear — UNCOMMON,
+  // sometimes RARE (user: the player already starts with commons), then arms a
+  // respawn.
+  breakCrate(c) {
+    if (c.dead) return;
+    c.dead = true;
+    c.respawnT = rand(CRATE_RESPAWN_MIN, CRATE_RESPAWN_MAX);
+    const slot = pick(["tires", "engine", "armor", "weapon"]);
+    // weapon crates: a small chance of the loot-only RAILGUN (user), else basics
+    const type = slot === "weapon" ? (rand() < 0.15 ? "railgun" : pick(ARENA_BASIC_WEAPONS)) : slot;
+    const tier = rand() < 0.7 ? 1 : 2;
+    this.dropPart(c.x, c.y, makePart(slot, type, tier));
+    this.particles.scrapPuff(c.x, c.y);
+    this.particles.sparks(c.x, c.y, fxRand(0, TAU), 8);
+    if (this.audio.playImpact) this.audio.playImpact(0.5);
+  }
+
+  updateCrates(dt) {
+    for (const c of this.crates) {
+      if (c.dead) { // respawn somewhere else once the timer runs out
+        c.respawnT -= dt;
+        if (c.respawnT <= 0) {
+          const p = this.cratePos();
+          c.x = p.x; c.y = p.y; c.hp = CRATE_HP; c.dead = false; c.seed = fxRand(0, TAU);
+        }
+        continue;
+      }
+      // a moving car smashes straight through it (bots deliberately don't brake)
+      for (const car of this.cars()) {
+        if (this.isDeadCar(car)) continue;
+        if (dist(car.x, car.y, c.x, c.y) < c.r + car.radius &&
+            Math.hypot(car.vx, car.vy) > CRATE_BREAK_SPEED) {
+          this.breakCrate(c);
+          break;
+        }
+      }
     }
   }
 
@@ -1291,6 +1462,7 @@ class ArenaGame {
       this.updateHooks(dt);    // bots keep hooking each other while you spectate
       this.updateProjectiles(dt);
       this.updateMines(dt);
+      this.updateCrates(dt);   // crates keep smashing/respawning while you spectate
       this.updateDrops(dt);
       // scrap eaten by bots still respawns (same top-up as the alive branch)
       if (this.scrap.some((s) => s.dead)) {
@@ -1308,8 +1480,8 @@ class ArenaGame {
       if (this.spectate) {
         const t = this.spectateTarget();
         if (t) {
-          this.cam.x = clamp(t.x, WORLD.w / 2, ARENA.w - WORLD.w / 2);
-          this.cam.y = clamp(t.y, WORLD.h / 2, ARENA.h - WORLD.h / 2);
+          this.cam.x = clamp(t.x, VIEW.w / 2, ARENA.w - VIEW.w / 2);
+          this.cam.y = clamp(t.y, VIEW.h / 2, ARENA.h - VIEW.h / 2);
         }
       }
       return;
@@ -1335,12 +1507,14 @@ class ArenaGame {
     // weapon fire, then combat: bots think, Titan crawls, cars collide, shots resolve
     this.updateWeapon(dt);
     this.updatePlayerHook(dt); // fire the minelayer hook (right-click / HOOK button)
+    this.updateRailgun(dt);    // charge/release the loot-only railgun (left hold / SNIPE)
     this.updateBots(dt);
     this.updateBossWorld(dt);
     this.updateCollisions();
     this.updateHooks(dt);      // reel grabbed cars (final say on their position)
     this.updateProjectiles(dt);
     this.updateMines(dt);
+    this.updateCrates(dt);
     this.updateDrops(dt);
 
     // first-encounter banner the first time you get near EACH boss type
@@ -1356,6 +1530,7 @@ class ArenaGame {
       const drain = Math.min(150 * dt, s.amount);
       s.amount -= drain;
       this.addXp(drain * XP_PER_SCRAP);
+      this.healFromScrap(drain, s.maxAmount);
       if (Math.random() < dt * 24) this.particles.repairGlow(p.x, p.y); // cosmetic sparkle
       if (s.amount <= 0) s.dead = true;
     }
@@ -1370,6 +1545,10 @@ class ArenaGame {
     this.renderer.recordSkids(p);
     for (const b of this.bots) if (!b.deadFlag) this.renderer.recordSkids(b);
 
+    // wheels mend after 10s without a hit (damagePlayer zeroes player.sinceHit);
+    // the REGEN stat trims the wait, 0.5s per point (user)
+    tickWheelRepair(p, dt, WHEEL_REPAIR_DELAY - 0.5 * this.stats.regen);
+
     // passive health regen: only after REGEN_DELAY seconds without taking a hit
     // (any damage above resets outOfCombat). Rate scales with the REGEN stat.
     this.outOfCombat += dt;
@@ -1383,9 +1562,10 @@ class ArenaGame {
     this.tickBanners(dt);
 
     // camera follows the player, clamped so the view never shows past the walls.
-    // Viewport is the LOGICAL 1280x720 (the backing store is hi-dpi; the
-    // renderer scales its context, so world units seen stay fixed = same zoom).
-    const vw = WORLD.w, vh = WORLD.h;
+    // Viewport is the LOGICAL VIEW (area-locked to the window; the backing store
+    // is hi-dpi and the renderer scales its context, so the visible world AREA
+    // stays constant across monitors = same amount seen, no per-screen edge).
+    const vw = VIEW.w, vh = VIEW.h;
     this.cam.x = clamp(p.x, vw / 2, ARENA.w - vw / 2);
     this.cam.y = clamp(p.y, vh / 2, ARENA.h - vh / 2);
 

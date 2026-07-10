@@ -25,21 +25,19 @@ button.hidden { display: none; }
 
 /* Arena stat-point allocation: docked flush to the BOTTOM-center so it never
    fights the top-of-screen boss bar / banners (non-blocking — world runs) */
+/* SPEND POINTS panel: docked top-left under the LVL/HP HUD (JS sets left/top) */
 #arena-stats {
   position: absolute;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 0; top: 0;
   z-index: 8;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 7px 9px;
   background: rgba(12, 10, 8, 0.92);
   border: 1px solid #c9a227;
-  border-bottom: none;
-  border-radius: 10px 10px 0 0;
+  border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
 }
 
@@ -55,9 +53,9 @@ button.hidden { display: none; }
 .stat-row { display: flex; gap: 6px; }
 
 .stat-btn {
-  min-width: 68px;
+  min-width: 52px;
   min-height: 40px;
-  padding: 8px 10px;
+  padding: 8px 6px;
   background: #2f6f4f;
   color: #fff;
   border: none;
@@ -827,6 +825,24 @@ body.touch-mode #spectate-ui { top: 8px; }
   text-align: right;
 }
 
+/* pill toggle used for FULLSCREEN (ON/OFF) in Options. ID selector so it beats
+   the generic `.overlay button` theme; reset the size/margin that rule leaks. */
+#fullscreen-btn {
+  margin-top: 0;
+  min-width: 78px;
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #fff;
+  background: #6b6257;   /* OFF: neutral */
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#fullscreen-btn.on { background: #3fa34d; }  /* ON: green */
+#fullscreen-btn:hover { filter: brightness(1.1); }
+
 /* field guide: card grid with live-rendered car portraits */
 #guide-grid {
   display: grid;
@@ -956,10 +972,10 @@ body.touch-mode #spectate-ui { top: 8px; }
   .shop-card .desc { font-size: 10px; }
   #guide-grid { max-height: 46vh; }
   .guide-card { padding: 6px 10px; gap: 10px; }
-  /* arena stat buttons: compact for a short landscape phone */
-  #arena-stats { padding: 6px 8px; gap: 4px; bottom: 0; }
-  #stat-prompt-txt { font-size: 10px; letter-spacing: 1px; }
-  .stat-btn { min-width: 58px; min-height: 38px; font-size: 10px; padding: 6px 6px; }
+  /* arena stat buttons: compact for a short landscape phone (top-left column) */
+  #arena-stats { padding: 5px 6px; gap: 3px; }
+  #stat-prompt-txt { font-size: 9px; letter-spacing: 1px; }
+  .stat-btn { min-width: 46px; min-height: 34px; font-size: 9px; padding: 5px 4px; }
   /* weapon picker: shrink cards so 3 fit a short landscape phone */
   #weapon-grid { gap: 8px; }
   .weapon-card { width: 150px; padding: 8px 8px 10px; gap: 4px; }

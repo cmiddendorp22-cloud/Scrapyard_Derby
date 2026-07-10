@@ -20,7 +20,11 @@ const ARENA_TIERS = [
 const TIER_MAX = ARENA_TIERS.length - 1; // 4 = legendary
 
 const PART_SLOTS = ["tires", "engine", "weapon", "armor"];
-const ARENA_WEAPON_TYPES = ["cannon", "minelayer", "ram", "shotgun"];
+// all weapon types that can exist as PARTS (loot/equip/drops). The RAILGUN is
+// LOOT-ONLY (user): never on the weapon-select screen or the bot spawn pool —
+// found in crates (small chance) and central-boss drops.
+const ARENA_WEAPON_TYPES = ["cannon", "minelayer", "ram", "shotgun", "railgun"];
+const ARENA_BASIC_WEAPONS = ["cannon", "minelayer", "ram", "shotgun"]; // starting picks / bot spawns
 
 // build a part { slot, type, tier, cd }. `cd` is a per-weapon fire timer.
 function makePart(slot, type, tier) {

@@ -486,6 +486,183 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-10** — Railgun damage halved (user): `RAIL_DMG` 195 → 97.5 (a
+  full-tier-scaled slug two-shots most cars instead of one-shotting rookies;
+  speed/reload/pierce unchanged).
+- **2026-07-10** — Railgun DE-CHARGED + tooltip fix + tougher tires (user, 3
+  asks). (1) The railgun's charge-up is GONE: it now fires a full-damage slug
+  straight off the FIRE channel (left-click / auto-fire / touch FIRE) with
+  just the long `RAIL_CD` 2.2s RELOAD between shots — `weaponAbility` returns
+  null for it (no SNIPE button), `railCharge` deleted everywhere, the HUD
+  gauge shows READY/RELOAD only, and the on-car visuals are ready-cyan vs
+  reload-red coils + the refill bar (charge bloom removed). Bots fire it
+  directly when lined up. (2) The RELOAD stat tooltip only mentions the hook
+  cooldown while a MINELAYER is equipped (`statEffectText` gates on
+  `hasMinelayer()`). (3) Higher-tier TIRES are harder to break: per-wheel
+  pools retuned (`WHEEL_HP_BASE` 21 + `WHEEL_HP_TIER` 7) so legendary wheels
+  (56) are EXACTLY 2x common (28). All gated in arena-level-test.js — 5/5
+  stability + full regression green.
+- **2026-07-10** — Railgun tuning + RELOAD audit + on-car sniper states (user,
+  3 quick asks). (1) RAILGUN x3 DAMAGE + much faster slug: `RAIL_DMG` 65 →
+  195, `RAIL_SPEED` 1250 → 2200 (near-hitscan), `RAIL_LIFE` 1.0 (~2200px
+  reach). (2) RELOAD now works for EVERY weapon — audit found the RAM ignored
+  it; its wind-up now builds `(1 + reload*0.08)x` faster (player) /
+  `reloadMul()` (bots). Cannon/shotgun/mines/hook/railgun already scaled.
+  Gated by a per-weapon reload test. (3) SNIPER STATE ON THE CAR: the rail's
+  coil accents brighten with CHARGE + a growing cyan muzzle bloom (flares at
+  full), and while RELOADING the coils dim red with a thin refill bar along
+  the barrel — driven by `_railState` in `drawCar` for the player AND bots
+  (you can see an enemy sniper spinning up). Test mode's tier buttons also
+  spawn a railgun now. Preview `?mode=arena&railgun[&reloading]`.
+- **2026-07-10** — Arena BOSS ATTACK BUFFS (user: "more attacks and firerate
+  for current bosses"; no new boss, no scaling — kept flat). TITAN: heavy
+  cannon fires every 0.7s (was 1.0) + a new SHRAPNEL RING — every 8-13s
+  (seeded) with a car within 700px, a 0.6s spin-up telegraph (tightening
+  orange band in `drawBoss`) then 12 evenly-spaced radial slugs (speed 250,
+  dmg 16, gaps to slip between; fires even with plates gone). MAGNET: a new
+  DEBRIS FLING — the instant its overload window closes it hurls 8 radial junk
+  slugs (speed 330, dmg 20), punishing cars still hugging it when the
+  vulnerability ends (`debrisFling`). Gated by arena-level-test.js (ring
+  telegraph + 12 even slugs, fling on overload end) — 8/8 stability + full
+  regression green.
+- **2026-07-10** — Arena SINGLE WEAPON SLOT (user: "easier; might change it
+  back"). The dual primary/secondary model is retired: `weapon2` stays a
+  DORMANT null on the loadout (field kept for a future revival), `targetSlot`
+  routes every weapon drop to `weapon1` (equip = replace + old weapon swaps
+  out), `swapWeapons` + the ⇄ panel control + the WPN2 row are gone, and
+  `hasRam`/`hasMinelayer`/`minelayerTierOf` read weapon1 only. INPUT MODEL
+  simplified: spammables (cannon/shotgun/mines) on FIRE (left-click / F
+  auto-fire / touch FIRE); HOLD abilities (ram CHARGE, railgun SNIPE) on
+  LEFT-hold; the HOOK on RIGHT-click; ONE touch ability button
+  (`#touch-ability2` dormant). `resolvePlayerInputs` → `_fireActive` +
+  `_abilityHeld`. Start-screen hint updated. Test suites rewritten for the
+  single slot.
+- **2026-07-10** — Arena RAILGUN (user Q&A): a LOOT-ONLY sniper — never a
+  starting pick (not in `ARENA_WEAPONS`/bot spawn pool); FOUND in crates (15%
+  of weapon rolls, `ARENA_BASIC_WEAPONS` otherwise) and central-boss drops
+  (`ARENA_WEAPON_TYPES` now includes it). HOLD left-click/SNIPE to charge
+  (`RAIL_CHARGE_T` 1s, min 0.35 to fire), release a PIERCING slug: `RAIL_DMG`
+  65 x tier x charge, speed 1250, ~1750px reach, `strength` 3 shared between
+  bullet clashes AND a pierce budget (`pierceStep` in updateProjectiles) —
+  each car costs 1 (full damage each, once, via `hitSet`), a WHOLE drained
+  scrap pile 1.5 ("two piles' worth", pays XP/heal to the shooter), mines
+  detonate + crates break for 1 each, a BOSS absorbs it outright. Cooldown
+  `RAIL_CD` 2.2s / reload. BOTS use looted railguns (charge while lined up →
+  lead the slug). Render: long rail barrel + coil accents (`drawWeaponGear`),
+  white-hot lance slug (`drawBullet`), SNIPE/RELOAD charge gauge in the HUD.
+  Fixed en route: fresh cars have `stunT` undefined — gate with `> 0` checks,
+  never `<= 0`. Preview `?mode=arena&railgun`. Gated by arena-level-test.js
+  (charge-release + fizzle + cooldown, pierce-two-cars full damage, 2-pile
+  budget, loot-only asserts, bot fires it) — 10/10 stability + full regression.
+- **2026-07-10** — Arena FAIRNESS batch (user): (1) BOT ATTACK GATE — bots
+  only attack the PLAYER when they'd be visible on the player's screen
+  (logical 1280x720 rect) AND after a human-ish REACTION delay:
+  `persona.reactionT` (0.2-0.55s roll), `playerSeenT` tracks continuous
+  on-screen time (off-screen resets it, so every re-entry pays the delay).
+  Gates gunfire/mines (`attackGate` in the fire block), the hook throw, and
+  ram wind-ups; bot-vs-bot/boss combat ungated. (2) CRATES never SPAWN inside
+  the player's view frame (`cratePos` rejects the view rect + 80px margin) —
+  no loot popping into existence on screen. (3) REGEN also trims the WHEEL
+  mend gate: 0.5s per point (10s → 5s at max), via `tickWheelRepair`'s new
+  `delay` param (player only; bots keep 10s). All gated by arena-level-test.js
+  (off-screen never fired on + reaction delay + reset-on-exit, 40 cratePos
+  rolls all outside the view, wheel mend at 7s with REGEN 6).
+- **2026-07-09** — Arena LOOT CRATES (user Q&A; closes the "map loot spawning"
+  backlog item). `CRATE_COUNT` 7 destructible crates scattered around the map
+  (seeded `cratePos`: away from the center boss, the player, and each other) so
+  ROAMING pays off. Crack one with 2 bullet hits (`CRATE_HP`, splinter-crack
+  visual after the first), by driving through it faster than
+  `CRATE_BREAK_SPEED` 60 (a parked car resting on one is safe), or with a mine
+  blast (`detonateMine` pops crates in radius). Always drops ONE part a step
+  above starting gear (user: 70% UNCOMMON / 30% RARE, any slot — the player
+  already starts with commons), then respawns somewhere else 30-60s later (`updateCrates`, run
+  in alive + dead branches — spectate parity). BOTS (user spec): when NOT in
+  combat, a crate on the bot's SCREEN (logical 1280x720 rect, same gate as the
+  hook) beats scrap EVERY time — they drive THROUGH it at speed (no arrival
+  braking) so contact smashes it, then the drop flows through normal loot AI.
+  Render: `drawCrate` banded wooden box + gold latch, slight seeded tilt,
+  viewport-culled; no minimap marker (discovery reward). Preview
+  `?mode=arena&crate`. Gated by arena-level-test.js (spawn count, 2-hit
+  shoot-open + low-tier drop + 30-60s respawn relocate, smash-through +
+  parked-safe, bot picks an on-screen crate over closer scrap) + crate
+  neutralization added to 3 older idle-bot tests (farm-shot, moth-orbit,
+  park-linger) whose destinations crates could divert — 8/8 stability + full
+  regression green.
+- **2026-07-09** — Arena WHEEL DISMEMBERMENT (user Q&A; the first slice of the
+  shoot-parts-off pillar — WHEELS ONLY for now). Every arena car (player + bots)
+  carries FOUR individual wheels (`wheelFL/FR/RL/RR` components; `setupWheels`
+  sizes each `WHEEL_HP_BASE` 22 + `WHEEL_HP_TIER` 5 x (tires tier+1); damage
+  FRACTION carries across a re-tier so equipping better tires never heals). A
+  BULLET (or crash/hook chip) chews only the ONE wheel CLOSEST to the hit; an
+  EXPLOSION (mine/slam) chews the TWO closest, splitting the chip (user spec) —
+  `chipWheels` takes `WHEEL_CHIP` 40% of the dealt damage ON TOP of the hull
+  damage, wired into `damagePlayer` + `ArenaBot.hurt`. PHYSICS: the four wheels
+  fold into the Gauntlet's leftWheels/rightWheels side pools (`syncWheelSides`:
+  side damage-factor = AVERAGE of its two wheels' factors, inverted back to an
+  hp so `Car.integrate` applies its veer/grip/fishtail unchanged — one broken
+  wheel = half the side penalty, all four = fishtail + 0.5x cap). Broken wheels
+  STAY ON THE CAR as a debuff (user call — not loot; the tires part still drops
+  on a full kill) and MEND after `WHEEL_REPAIR_DELAY` 10s without taking ANY
+  damage, healing over `WHEEL_REPAIR_TIME` 4s (`tickWheelRepair` in the player
+  alive update + `ArenaBot.update` — spectate parity holds). UI: per-wheel
+  cues on the model (chip flash, browning, broken hangs askew + rusty, green
+  mend pulse) PLUS a nose-up 4-pip WHEEL DIAGRAM in the top-left HUD panel
+  (green→red per wheel, dark = broken, pulsing green = mending; shows the
+  watched bot's wheels while spectating) — user asked for a readout beyond the
+  model. Respawn = fresh wheels. Helpers in arena-bot.js next to `ramDamageMul`;
+  no RNG. Preview `?mode=arena&wheels`. Gated by arena-level-test.js (1-wheel
+  bullets + 2-wheel explosions + chip math, veer, half-penalty solo wheel,
+  4-broken cap, 10s gate + gradual mend + hit reset, tier pools + fraction
+  carry, respawn, bots) — 5/5 stability + full regression green.
+- **2026-07-09** — Arena HOOK FAIRNESS pass (user; replaces the old
+  "hook counterplay" backlog item). (1) Bots only THROW a hook when they'd be
+  visible ON THE TARGET'S SCREEN — a logical-1280x720 rect centered on the
+  target (`onTargetScreen` gate in the bot hook branch; deterministic
+  regardless of window shape) — no more getting hooked by a car you can't see.
+  (2) Bot hooks MISS more: a per-spawn `persona.hookErr` (0.08-0.18 rad,
+  ~5-10°) smears every hook throw — much sloppier than gun `aimErr` (0.02-0.05).
+  (3) A LAUNCHED RAM can't be GRABBED (user pick: "immune while launched
+  only") — `updateHooks` skips `isChargingRam` cars in the grab sweep (head
+  passes through); an already-grabbed ram stays grabbed, and the immunity is
+  primary-slot-only like the other ram perks. Gated by arena-level-test.js
+  (off-screen vertical throw blocked + on-screen throws, hookErr band +
+  sloppier-than-guns, launched-ram pass-through + idle-ram grabbed).
+- **2026-07-09** — FILL-THE-SCREEN + FULLSCREEN (user; area-locked, fair). New
+  `VIEW` logical viewport in utils.js (separate from `WORLD`, the fixed Gauntlet
+  play field). `fit()` in main.js AREA-LOCKS `VIEW` to the window aspect ratio
+  (`setView(aspect)`: `VIEW.w = sqrt(AREA*ar)`, `VIEW.h = sqrt(AREA/ar)`, product
+  = 1280*720 const), clamped to 4:3..21:9 (extremes letterbox). The canvas CSS
+  fills the window at that aspect (uniform scale = NO distortion) and the backing
+  store stays hi-dpi. RESULT: Arena fills the screen edge-to-edge on 16:10 /
+  ultrawide / resized windows with no black bars, and every monitor sees the same
+  visible AREA (fair — deliberately NOT the io-game "wider screen sees more"
+  model, per user). Gauntlet keeps a fixed 1280x720 (letterboxed) since its arena
+  has walls. All Arena viewport refs moved `WORLD.w/h → VIEW.w/h`: the
+  ArenaRenderer transform + culling + all screen-space HUD (minimap/leaderboard/
+  killfeed/boss bar/banners/death overlay/spectate label), the camera clamp
+  (alive + spectate), the mouse→world aim mapping, and `positionArenaDom`'s scale.
+  `fit()` re-runs on every mode switch so `VIEW` matches the active mode.
+  Gauntlet render.js/ui.js untouched (`VIEW==WORLD` there). FULLSCREEN toggle
+  added to the Options menu (`#fullscreen-btn`, ON/OFF pill, Fullscreen API on
+  `documentElement`; browsers require a gesture to ENTER so the pref is
+  remembered but not auto-applied on load; `fullscreenchange` → relabel + `fit()`;
+  all calls guarded for headless). Verified no-distortion + correct HUD anchoring
+  via screenshots at 2560x1080 (ultrawide), 1920x1200 (16:10), 1920x1080 (16:9),
+  and 844x390 (mobile, now fills instead of letterboxing) + the Options toggle;
+  full regression green. Backlog: the crosshair item + the broader screen-size
+  audit (tiny phones/tablets/hit-targets) + UI scale/reposition remain open.
+- **2026-07-09** — Arena scrap now HEALS the player (user): absorbing a FULL
+  scrap pile heals 3% of maxHp (`SCRAP_HEAL_FRAC` 0.03), pro-rata for a partial
+  absorption. `healFromScrap(drain, pile.maxAmount)` = `maxHp * 0.03 *
+  drain/maxAmount`, clamped at maxHp, no-op while dead/pristine. Wired into BOTH
+  player scrap paths (drive-over + shoot-to-harvest); still grants the same XP.
+  Bots unchanged (scrap → XP only). Gated by arena-level-test.js (full pile =
+  3%, half = 1.5%, clamps, dead-safe).
+- **2026-07-09** — SPEND-POINTS panel moved to top-left under the HUD (user):
+  `#arena-stats` restyled from a bottom-center dock to a left-column panel;
+  `positionArenaDom` places it at logical (16,146) under the LVL/HP HUD and
+  pushes the loadout panel below it when it's showing. Short-phone media block
+  compacted. Also de-em-dashed the label ("SPEND POINTS: N").
 - **2026-07-09** — PARTS/loadout panel opens on entering an Arena run (user):
   `loadoutOpen = true` set in `chooseWeapon` (+ the `?weapon=` preview + test
   mode); still toggleable with PARTS / L.
@@ -531,8 +708,9 @@ cascade bug that text-only testing never would.
   "🛠 TEST MODE" button on the start screen launches Arena (cannon) with a
   floating `#test-panel`: +1/+5/+10 LVL, HEAL, GODMODE toggle (`arena._godmode`,
   gated in `damagePlayer`), KILL ME (full death→respawn flow), SPAWN BOT at a
-  typed level, spawn a full part set (every slot + all 4 weapon types) at any
-  TIER, SPAWN TITAN/MAGNET, OVERLOAD (the Magnet), WRECK BOTS (test loot). All
+  typed level, spawn a full part set (every slot + ALL weapon types incl. the
+  loot-only railgun) at any TIER, SPAWN TITAN/MAGNET, OVERLOAD (the Magnet),
+  WRECK BOTS (test loot). All
   self-contained in clearly-commented blocks to remove when done: the
   `#test-panel`/`#test-mode-btn` HTML, the TEST MODE CSS block, `initTestPanel`
   (+ its call, the quitToMenu hide line, and the one `_godmode` line in
