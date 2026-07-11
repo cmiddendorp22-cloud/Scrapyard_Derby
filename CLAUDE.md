@@ -500,6 +500,23 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-11** — MULTIPLAYER M1 server SAFEGUARDS + free hosting path (user:
+  "completely free, no credit card"). Since no reliable always-on cloud host is
+  free-without-a-card anymore, the chosen path for now is HOST-ON-YOUR-PC + a
+  free **Cloudflare quick tunnel** (`cloudflared tunnel --url
+  http://localhost:8090`) → a public `wss://<random>.trycloudflare.com` URL, no
+  account/card; verified end-to-end (the public URL reached the local sim's
+  health endpoint). SAFEGUARDS added to server.js: a ROOM CODE gates joins
+  (`ROOM_CODE` env or a random 5-char code printed at startup — a client must
+  send `{type:"join", room, name}` with the right code FIRST or it's rejected +
+  closed), plus `MAX_PLAYERS` (12), `MAX_PER_IP` (3), a 5s unauthenticated-join
+  timeout, and a per-connection message-rate ceiling. Verified: correct code
+  joins + drives, wrong code REJECTED + closed, two players still see each other
+  through the gate. `server/README.md` documents the free tunnel + room-code
+  runbook; the root Dockerfile still covers a real (card-based) always-on host
+  later. Test clients (test-client/two.js) send the join now. NEXT: client
+  ONLINE mode (a join screen for wss URL + room code, then stream input + render
+  snapshots).
 - **2026-07-11** — MULTIPLAYER M1 (server side): AUTHORITATIVE ws SERVER, built
   + verified headless (user hosts the client on Netlify — which can't run a
   realtime server, so the client stays static-on-Netlify and the sim server

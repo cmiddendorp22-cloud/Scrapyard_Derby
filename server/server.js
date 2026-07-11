@@ -22,9 +22,21 @@ const TICK_HZ = 60;                 // sim steps per second (fixed timestep)
 const SNAPSHOT_EVERY = 3;           // broadcast a snapshot every N ticks (~20 Hz)
 const STEP = 1 / TICK_HZ;
 
+// --- SAFEGUARDS (a public tunnel URL is unguessable, but "anyone with the
+//     link" shouldn't be a free-for-all): a ROOM CODE gates joins, plus caps
+//     on total players, connections per IP, and message rate. ---
+function genRoomCode() { const a = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; let s = ""; for (let i = 0; i < 5; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+const ROOM_CODE = String(process.env.ROOM_CODE || genRoomCode()).toUpperCase();
+const MAX_PLAYERS = parseInt(process.env.MAX_PLAYERS, 10) || 12; // human cap (bots fill the rest)
+const MAX_PER_IP = parseInt(process.env.MAX_PER_IP, 10) || 3;    // concurrent conns from one address
+const JOIN_TIMEOUT_MS = 5000;       // close a connection that never sends a valid join
+const MSG_PER_SEC = 240;            // per-connection message-rate ceiling (drops floods)
+
 const world = createWorld();
 let nextId = 1;
-const clients = new Map();          // ws → { id, player }
+const clients = new Map();          // ws → { id, player }  (JOINED players only)
+const ipCount = new Map();          // ip → concurrent connection count
+function safeSend(ws, obj) { try { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (_) {} }
 
 // an idle input object the client's messages fill in
 function freshInput() {
@@ -92,15 +104,47 @@ const httpServer = http.createServer((req, res) => {
 });
 const wss = new WebSocketServer({ server: httpServer });
 
-wss.on("connection", (ws) => {
-  const player = addPlayer("PLAYER");
-  clients.set(ws, { id: player.netId, player });
-  ws.send(JSON.stringify({ type: "welcome", id: player.netId,
-    arena: { w: sim.ARENA.w, h: sim.ARENA.h, wall: sim.ARENA.wall }, view: { w: sim.VIEW.w, h: sim.VIEW.h } }));
-  console.log("+ player", player.netId, "(", world.players.length, "online )");
+wss.on("connection", (ws, req) => {
+  const ip = String(req.socket.remoteAddress || "?").replace(/^::ffff:/, "");
+  ipCount.set(ip, (ipCount.get(ip) || 0) + 1);
+  let joined = false, player = null, msgCount = 0;
+  const rateReset = setInterval(() => { msgCount = 0; }, 1000);
+  const cleanup = () => {
+    clearInterval(rateReset); clearTimeout(joinTimer);
+    const c = (ipCount.get(ip) || 1) - 1; if (c <= 0) ipCount.delete(ip); else ipCount.set(ip, c);
+    clients.delete(ws);
+    if (player) { removePlayer(player); console.log("- player", player.netId, "(", world.players.length, "online )"); }
+  };
+
+  // too many connections from one address → refuse before anything else
+  if ((ipCount.get(ip) || 0) > MAX_PER_IP) {
+    safeSend(ws, { type: "reject", reason: "too many connections from your network" });
+    ws.close(); cleanup(); return;
+  }
+  // must present a valid join (room code) quickly, or we drop the socket
+  const joinTimer = setTimeout(() => { if (!joined) { safeSend(ws, { type: "reject", reason: "join timed out" }); ws.close(); } }, JOIN_TIMEOUT_MS);
 
   ws.on("message", (data) => {
+    if (++msgCount > MSG_PER_SEC) return; // flood guard: drop excess this second
     let msg; try { msg = JSON.parse(data); } catch (_) { return; }
+
+    if (!joined) { // the ONLY thing an unauthenticated socket may do is join
+      if (msg.type !== "join") return;
+      if (String(msg.room || "").toUpperCase() !== ROOM_CODE) {
+        safeSend(ws, { type: "reject", reason: "wrong room code" }); ws.close(); return;
+      }
+      if (world.players.length >= MAX_PLAYERS) {
+        safeSend(ws, { type: "reject", reason: "server full" }); ws.close(); return;
+      }
+      joined = true; clearTimeout(joinTimer);
+      player = addPlayer(msg.name);
+      clients.set(ws, { id: player.netId, player });
+      safeSend(ws, { type: "welcome", id: player.netId,
+        arena: { w: sim.ARENA.w, h: sim.ARENA.h, wall: sim.ARENA.wall }, view: { w: sim.VIEW.w, h: sim.VIEW.h } });
+      console.log("+ player", player.netId, "\"" + player.name + "\" (", world.players.length, "online )");
+      return;
+    }
+
     if (msg.type === "input") {
       const inp = player.input;
       inp.throttle = clampNum(msg.throttle); inp.steer = clampNum(msg.steer);
@@ -115,11 +159,7 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => {
-    removePlayer(player);
-    clients.delete(ws);
-    console.log("- player", player.netId, "(", world.players.length, "online )");
-  });
+  ws.on("close", cleanup);
   ws.on("error", () => {});
 });
 function clampNum(v) { v = +v; return Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0; }
@@ -140,4 +180,8 @@ setInterval(() => {
 
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log("Scrapyard Arena server on 0.0.0.0:" + PORT + " (tick " + TICK_HZ + "Hz, snapshot ~" + Math.round(TICK_HZ / SNAPSHOT_EVERY) + "Hz)");
+  console.log("┌─────────────────────────────────────────────┐");
+  console.log("│  ROOM CODE:  " + ROOM_CODE + "  (players need this to join) │");
+  console.log("└─────────────────────────────────────────────┘");
+  console.log("  caps: " + MAX_PLAYERS + " players, " + MAX_PER_IP + " conns/IP. Set ROOM_CODE=... to pin the code.");
 });
