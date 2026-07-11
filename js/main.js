@@ -38,6 +38,7 @@
     canvas.width = Math.max(1, Math.round(VIEW.w * displayScale * dpr));
     canvas.height = Math.max(1, Math.round(VIEW.h * displayScale * dpr));
     positionArenaDom();
+    if (typeof applyTouchControlLayout === "function") applyTouchControlLayout(); // moved touch controls track resizes
   }
   // Anchor the fixed-position Arena loadout panel + toggle to the canvas so they
   // line up with the canvas HUD at any display scale / letterbox.
@@ -45,22 +46,27 @@
     if (!canvas.getBoundingClientRect) return; // headless/no-DOM guard
     const r = canvas.getBoundingClientRect();
     const s = r.width / VIEW.w;
-    const leftPx = r.left + 16 * s;
+    // the DOM column FOLLOWS the canvas "hud" layout group (move it, they move);
+    // offsets scale with the layout's UI SCALE so the column stays stacked
+    const lay = (arena.renderer && arena.renderer.layout) || { scale: 1, pos: {} };
+    const sc = lay.scale || 1;
+    const hudA = arena.renderer && arena.renderer.layoutAnchor ? arena.renderer.layoutAnchor("hud", 16, 14) : { x: 16, y: 14 };
+    const leftPx = r.left + hudA.x * s;
     const stats = document.getElementById("arena-stats");
     const lo = document.getElementById("arena-loadout");
     const tog = document.getElementById("loadout-toggle");
     // SPEND POINTS panel: top-left, under the LVL/HP HUD block (user)
-    let loTopPx = r.top + 150 * s;
+    let loTopPx = r.top + (hudA.y + 136 * sc) * s;
     if (stats) {
       stats.style.left = leftPx + "px";
-      stats.style.top = (r.top + 146 * s) + "px";
+      stats.style.top = (r.top + (hudA.y + 132 * sc) * s) + "px";
       if (!stats.classList.contains("hidden")) { // push the loadout below it
-        loTopPx = r.top + 146 * s + stats.getBoundingClientRect().height + 8;
+        loTopPx = r.top + (hudA.y + 132 * sc) * s + stats.getBoundingClientRect().height + 8;
       }
     }
     // PARTS toggle: stack it below the loadout panel (if shown) else below the
     // stat panel, so it never overlaps them on short (mobile) viewports.
-    let togTopPx = r.top + 150 * s;
+    let togTopPx = r.top + (hudA.y + 136 * sc) * s;
     if (lo) {
       lo.style.left = leftPx + "px"; lo.style.top = loTopPx + "px";
       if (!lo.classList.contains("hidden")) {
@@ -282,6 +288,8 @@
     document.getElementById("touch-ability1").classList.add("hidden");
     document.getElementById("touch-ability2").classList.add("hidden");
     document.getElementById("test-panel").classList.add("hidden"); // TEST MODE (dev) — remove later
+    document.getElementById("layout-done-btn").classList.add("hidden");
+    touchLayoutEdit = false; layoutDrag = null; game.input.layoutEdit = false; // exit any HUD-layout editing
     if (arena) arena._godmode = false;
     loadoutOpen = false; abilitySig = ""; // refresh ability buttons on the next run
     if (active) {
@@ -633,18 +641,207 @@
   let cursorHidden = false;
   function updateCursor() {
     const hide = active === arena && arena.started && !arena.dead && !arena.paused &&
-      arena.renderer.xhair.style !== "off";
+      arena.renderer.xhair.style !== "off" && !layoutEditActive();
     if (hide !== cursorHidden) {
       cursorHidden = hide;
       canvas.style.cursor = hide ? "none" : "";
     }
   }
 
+  // ===== HUD LAYOUT: global UI SCALE + drag-to-move groups (user) ============
+  // Canvas groups (hud/minimap/killfeed/bossbar) live in renderer.layout as
+  // viewport FRACTIONS; touch controls store window fractions under "dom:<id>".
+  // Persisted per DEVICE TYPE — and this {scale, pos} blob is exactly what a
+  // website account profile would sync per-user later.
+  const LAYOUT_SCALE_MIN = 0.7, LAYOUT_SCALE_MAX = 1.4;
+  const TOUCH_LAYOUT_IDS = ["joystick-zone", "touch-fire", "touch-drift", "touch-ability1", "touch-pause"];
+  let layoutDrag = null;       // active drag: {kind:"canvas",key,offX,offY} | {kind:"dom",id,offX,offY}
+  let touchLayoutEdit = false; // pause-screen EDIT HUD LAYOUT mode (drag without holding H)
+  function layoutEditActive() { return game.input.layoutEdit || touchLayoutEdit; }
+  function layoutStoreKey() { return "sd_layout_" + (document.body.classList && document.body.classList.contains("touch-mode") ? "touch" : "desktop"); }
+  function loadLayout() {
+    let l = { scale: 1, pos: {} };
+    try {
+      const raw = localStorage.getItem(layoutStoreKey());
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (p && typeof p === "object") l = { scale: clamp(p.scale || 1, LAYOUT_SCALE_MIN, LAYOUT_SCALE_MAX), pos: p.pos || {} };
+      }
+    } catch (_) { /* storage unavailable */ }
+    arena.renderer.layout = l;
+    applyUiScaleCss();
+    applyTouchControlLayout();
+    reflectUiScaleUi();
+  }
+  function saveLayout() { try { localStorage.setItem(layoutStoreKey(), JSON.stringify(arena.renderer.layout)); } catch (_) {} }
+  function applyUiScaleCss() {
+    const st = document.documentElement && document.documentElement.style;
+    if (st && st.setProperty) st.setProperty("--ui-scale", arena.renderer.layout.scale);
+  }
+  function applyTouchControlLayout() { // moved touch controls: window-fraction left/top overrides
+    // (list inlined, not the shared const: fit() calls this hoisted fn at boot
+    // BEFORE the module's consts initialize — a TDZ trap)
+    for (const id of ["joystick-zone", "touch-fire", "touch-drift", "touch-ability1", "touch-pause"]) {
+      const el = document.getElementById(id);
+      if (!el || !el.style) continue;
+      const o = arena.renderer.layout.pos["dom:" + id];
+      if (o) {
+        el.style.left = Math.round(o.fx * window.innerWidth) + "px";
+        el.style.top = Math.round(o.fy * window.innerHeight) + "px";
+        el.style.right = "auto";
+        el.style.bottom = "auto";
+      } else {
+        el.style.left = ""; el.style.top = ""; el.style.right = ""; el.style.bottom = "";
+      }
+    }
+  }
+  const uiScaleEl = document.getElementById("ui-scale");
+  const uiScaleVal = document.getElementById("ui-scale-value");
+  function reflectUiScaleUi() {
+    if (!uiScaleEl) return;
+    uiScaleEl.value = Math.round((arena.renderer.layout.scale || 1) * 100);
+    if (uiScaleVal) uiScaleVal.textContent = uiScaleEl.value + "%";
+  }
+  if (uiScaleEl && uiScaleEl.addEventListener) uiScaleEl.addEventListener("input", () => {
+    arena.renderer.layout.scale = clamp(uiScaleEl.value / 100, LAYOUT_SCALE_MIN, LAYOUT_SCALE_MAX);
+    if (uiScaleVal) uiScaleVal.textContent = uiScaleEl.value + "%";
+    applyUiScaleCss();
+    saveLayout();
+  });
+  const layoutResetBtn = document.getElementById("layout-reset-btn");
+  if (layoutResetBtn && layoutResetBtn.addEventListener) layoutResetBtn.addEventListener("click", () => {
+    arena.renderer.layout = { scale: 1, pos: {} };
+    applyUiScaleCss();
+    applyTouchControlLayout();
+    reflectUiScaleUi();
+    saveLayout();
+  });
+  // client coords → logical viewport coords (same mapping the renderer uses)
+  function clientToLogical(cx, cy) {
+    if (!canvas.getBoundingClientRect) return null;
+    const r = canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return { x: ((cx - r.left) / r.width) * VIEW.w, y: ((cy - r.top) / r.height) * VIEW.h };
+  }
+  function layoutHitCanvas(lx, ly) { // which canvas group is under the cursor?
+    const groups = arena.renderer.layoutGroups();
+    const s = arena.renderer.layout.scale || 1;
+    for (const key of Object.keys(groups)) {
+      const d = groups[key];
+      const a = arena.renderer.layoutAnchor(key, d.defX, d.defY);
+      if (lx >= a.x - 8 && lx <= a.x + d.w * s + 8 && ly >= a.y - 8 && ly <= a.y + d.h * s + 8) {
+        return { kind: "canvas", key, offX: lx - a.x, offY: ly - a.y };
+      }
+    }
+    return null;
+  }
+  function layoutDragMove(cx, cy) {
+    if (!layoutDrag) return;
+    if (layoutDrag.kind === "canvas") {
+      const l = clientToLogical(cx, cy);
+      if (!l) return;
+      const groups = arena.renderer.layoutGroups();
+      const d = groups[layoutDrag.key];
+      const s = arena.renderer.layout.scale || 1;
+      const ax = clamp(l.x - layoutDrag.offX, 4, VIEW.w - d.w * s - 4);
+      const ay = clamp(l.y - layoutDrag.offY, 4, VIEW.h - d.h * s - 4);
+      arena.renderer.layout.pos[layoutDrag.key] = { fx: ax / VIEW.w, fy: ay / VIEW.h };
+    } else { // dom touch control
+      const el = document.getElementById(layoutDrag.id);
+      const w = el && el.offsetWidth || 60, h = el && el.offsetHeight || 60;
+      const x = clamp(cx - layoutDrag.offX, 2, window.innerWidth - w - 2);
+      const y = clamp(cy - layoutDrag.offY, 2, window.innerHeight - h - 2);
+      arena.renderer.layout.pos["dom:" + layoutDrag.id] = { fx: x / window.innerWidth, fy: y / window.innerHeight };
+      applyTouchControlLayout();
+    }
+  }
+  function layoutDragEnd() {
+    if (!layoutDrag) return;
+    layoutDrag = null;
+    saveLayout();
+  }
+  // desktop: hold H, drag panels (mouse); H also suppresses firing (arena reads input.layoutEdit)
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "KeyH" && !e.repeat && active === arena) game.input.layoutEdit = true;
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "KeyH") { game.input.layoutEdit = false; layoutDragEnd(); }
+  });
+  canvas.addEventListener && canvas.addEventListener("mousedown", (e) => {
+    if (active !== arena || !layoutEditActive()) return;
+    const l = clientToLogical(e.clientX, e.clientY);
+    if (!l) return;
+    const hit = layoutHitCanvas(l.x, l.y);
+    if (hit) { layoutDrag = hit; e.preventDefault(); e.stopPropagation(); }
+  }, true); // capture: beat the fire handler to the click while editing
+  window.addEventListener("mousemove", (e) => { if (layoutDrag) layoutDragMove(e.clientX, e.clientY); });
+  window.addEventListener("mouseup", layoutDragEnd);
+  // full edit mode: enter from Options (EDIT button) or the TAB key — the
+  // overlays step aside and you drag canvas groups AND touch controls without
+  // holding anything; DONE (or TAB again) exits back to wherever you came from.
+  const layoutEditBtn = document.getElementById("layout-edit-btn");
+  const layoutDoneBtn = document.getElementById("layout-done-btn");
+  let layoutEditReturn = "pause"; // where DONE goes back to: "options" | "pause" | "resume"
+  function setTouchLayoutEdit(on) {
+    touchLayoutEdit = on;
+    if (layoutDoneBtn) layoutDoneBtn.classList.toggle("hidden", !on);
+    document.getElementById("pause-screen").classList.toggle("hidden", on || !arena.paused);
+  }
+  function enterLayoutEdit(returnTo) {
+    layoutEditReturn = returnTo;
+    document.getElementById("options-screen").classList.add("hidden");
+    if (!arena.paused) arena.togglePause(); // edit over a frozen world (no firing/dying mid-drag)
+    setTouchLayoutEdit(true);
+  }
+  function exitLayoutEdit() {
+    setTouchLayoutEdit(false); // re-shows the pause overlay (arena is paused)
+    if (layoutEditReturn === "options") openOptions();
+    else if (layoutEditReturn === "resume" && arena.paused) arena.togglePause(); // TAB from live play → straight back in
+    layoutEditReturn = "pause";
+  }
+  if (layoutEditBtn && layoutEditBtn.addEventListener) layoutEditBtn.addEventListener("click", () => {
+    if (active === arena && arena.started) enterLayoutEdit("options");
+  });
+  if (layoutDoneBtn && layoutDoneBtn.addEventListener) layoutDoneBtn.addEventListener("click", exitLayoutEdit);
+  // TAB toggles the editor from anywhere in an Arena run (PC)
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "Tab" || active !== arena || !arena.started || arena.dead) return;
+    e.preventDefault(); // keep the browser's focus-cycling out of the game
+    if (touchLayoutEdit) { exitLayoutEdit(); return; }
+    const fromOptions = !document.getElementById("options-screen").classList.contains("hidden");
+    enterLayoutEdit(fromOptions ? "options" : arena.paused ? "pause" : "resume");
+  });
+  canvas.addEventListener && canvas.addEventListener("touchstart", (e) => {
+    if (active !== arena || !touchLayoutEdit || !e.touches.length) return;
+    const t = e.touches[0];
+    const l = clientToLogical(t.clientX, t.clientY);
+    if (!l) return;
+    const hit = layoutHitCanvas(l.x, l.y);
+    if (hit) { layoutDrag = hit; e.preventDefault(); e.stopPropagation(); }
+  }, { capture: true, passive: false });
+  for (const id of TOUCH_LAYOUT_IDS) { // touch controls drag as themselves in edit mode
+    const el = document.getElementById(id);
+    if (!el || !el.addEventListener) continue;
+    el.addEventListener("touchstart", (e) => {
+      if (!touchLayoutEdit || !e.touches.length) return;
+      const t = e.touches[0], r = el.getBoundingClientRect();
+      layoutDrag = { kind: "dom", id, offX: t.clientX - r.left, offY: t.clientY - r.top };
+      e.preventDefault(); e.stopPropagation();
+    }, { capture: true, passive: false });
+  }
+  window.addEventListener("touchmove", (e) => {
+    if (layoutDrag && e.touches.length) { layoutDragMove(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }
+  }, { passive: false });
+  window.addEventListener("touchend", layoutDragEnd);
+  loadLayout();
+  // ===== end HUD LAYOUT =====
+
   window.addEventListener("keydown", (e) => {
     if (e.code === "Escape") {
       // ESC backs out of the top-most overlay, then unpauses the active mode
       const vis = (id) => !document.getElementById(id).classList.contains("hidden");
-      if (vis("weapon-select")) backToStart();
+      if (touchLayoutEdit) exitLayoutEdit(); // the HUD editor owns the screen
+      else if (vis("weapon-select")) backToStart();
       else if (vis("options-screen")) closeOptions();
       else if (vis("guide-screen")) game.closeGuide();
       else if (vis("arena-guide-screen")) closeArenaGuide();
@@ -720,6 +917,14 @@
         arena.startWeapon = "railgun";
         arena.applyStats();
         if (params.has("reloading")) arena.railCd = 1.9; // show the on-car reload state (mid-refill) for screenshots
+      }
+      if (params.has("layout") && active === arena) { // preview a moved+scaled HUD layout
+        arena.renderer.layout = { scale: 1.2, pos: {
+          minimap: { fx: 0.015, fy: 0.42 },   // minimap+leaderboard to the left-middle
+          killfeed: { fx: 0.55, fy: 0.04 },   // killfeed near the top-center
+        } };
+        applyUiScaleCss();
+        if (params.has("edit")) touchLayoutEdit = true; // show the drag outlines
       }
       if (params.has("xhair") && active === arena) { // preview the crosshair (fake a cursor position)
         arena.input.hasMouse = true;
@@ -831,6 +1036,7 @@
       while (acc >= STEP) { active.update(STEP); acc -= STEP; }
       active.renderer.draw();
       if (active === arena) { updateArenaStatsUI(); updateLoadoutPanel(); updateDeathUI(); updateAbilityButtons(); } // level-ups / loot / death / ability buttons
+      arena.layoutEditing = active === arena && layoutEditActive(); // renderer draws drag outlines
       updateCursor(); // OS cursor hidden only while actually playing Arena
     } else {
       acc = 0; // on the menu nothing simulates; don't bank time to burst later

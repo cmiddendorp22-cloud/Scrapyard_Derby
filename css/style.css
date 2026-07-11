@@ -248,6 +248,28 @@ body.touch-mode:has(.overlay:not(.hidden)) #touch-controls { display: none; }
 
 .overlay.hidden { display: none; }
 
+/* ONE BIG PANEL per menu (user): every overlay's content sits inside a single
+   themed container — the look the individual option boxes had, promoted to
+   the menu's frame. Rows inside are flat with dividers (see .options-row). */
+.menu-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: rgba(28, 23, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 18px 36px 22px;
+  max-width: min(760px, 94vw);
+  max-height: 94vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.55);
+}
+.overlay .menu-panel h1 { font-size: 34px; }   /* the panel is the frame — calmer title */
+.overlay .menu-panel button { margin-top: 10px; font-size: 17px; padding: 11px 30px; }
+/* buttons INSIDE rows keep their compact pill sizing (ID-scoped ones override further) */
+.overlay .menu-panel .options-row button { margin-top: 0; font-size: 14px; padding: 9px 18px; }
+
 .overlay h1 {
   font-size: 58px;
   letter-spacing: 6px;
@@ -740,10 +762,10 @@ body.touch-mode #spectate-ui { top: 8px; }
 
 /* arena starting-weapon picker */
 #weapon-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* 2x2 square of classes (user) */
   gap: 14px;
-  justify-content: center;
-  flex-wrap: wrap;
+  justify-items: center;
   margin: 6px 0 4px;
 }
 
@@ -794,21 +816,23 @@ body.touch-mode #spectate-ui { top: 8px; }
 }
 
 /* options screen */
+/* option rows are FLAT lines inside the big .menu-panel, split by dividers */
 .options-row {
   display: flex;
   align-items: center;
   gap: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 14px 20px;
+  width: 100%;
+  padding: 11px 6px;
 }
+.options-row + .options-row { border-top: 1px solid rgba(255, 255, 255, 0.09); }
 
 .options-row label {
   color: var(--text-dim);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 2px;
+  flex: 1;
+  text-align: left;
 }
 
 #volume-slider {
@@ -844,6 +868,71 @@ body.touch-mode #spectate-ui { top: 8px; }
   width: 44px;
   text-align: right;
 }
+/* HUD LAYOUT: global UI scale (set as --ui-scale by main.js) applies to the
+   DOM HUD column + touch controls; canvas groups scale in the renderer */
+#arena-stats, #arena-loadout, #loadout-toggle {
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
+}
+#joystick-zone, #touch-fire, #touch-drift, #touch-ability1, #touch-ability2, #touch-pause {
+  transform: scale(var(--ui-scale, 1));
+}
+#ui-scale {
+  width: 160px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+#ui-scale-value {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  width: 44px;
+  text-align: right;
+}
+#layout-reset-btn {
+  margin-top: 0;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--panel-border);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#layout-reset-btn:hover { filter: brightness(1.15); }
+#layout-edit-btn {
+  margin-top: 0;
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #201a12;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#layout-edit-btn:hover { filter: brightness(1.1); }
+/* floating DONE for the HUD-layout editor (shown while dragging things around) */
+#layout-done-btn {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  padding: 10px 26px;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #201a12;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#layout-done-btn.hidden { display: none; }
 /* RGB color sliders + live swatch */
 #xhair-rgb {
   display: flex;
@@ -1032,7 +1121,10 @@ button.option-toggle:hover { filter: brightness(1.1); }
   .weapon-name { font-size: 13px; letter-spacing: 2px; }
   .weapon-desc { font-size: 10px; line-height: 1.3; }
   .options-row { padding: 4px 12px; gap: 10px; }
+  #options-screen { overflow-y: auto; justify-content: flex-start; padding-top: 6px; }
   #options-screen h1 { font-size: 24px; margin: 2px 0 4px; }
+  #ui-scale { width: 130px; }
+  #layout-reset-btn { padding: 5px 8px; font-size: 10px; }
   .xhair-chip { width: 30px; height: 30px; }
   #xhair-rgb { gap: 2px; }
   #xhair-rgb input { width: 150px; height: 12px; }

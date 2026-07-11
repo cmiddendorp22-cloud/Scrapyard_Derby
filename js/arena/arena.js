@@ -349,6 +349,8 @@ class ArenaGame {
     this._abilityHeld = ab
       ? (ab.hold ? (inp.mouseDown || inp.touchAbility1) : (inp.hookHeld || inp.touchAbility1))
       : false;
+    // HUD layout-edit (hold H): clicks move panels, they don't fire
+    if (inp.layoutEdit) { this._fireActive = false; this._abilityHeld = false; }
   }
 
   // RAM: HOLD left-click to CHARGE (dig in / wind up), release to LAUNCH a
@@ -1449,6 +1451,7 @@ class ArenaGame {
     if (this.paused) {
       document.getElementById("guide-btn").classList.add("hidden");        // the Gauntlet enemy guide
       document.getElementById("arena-guide-btn").classList.remove("hidden"); // ...Arena has its own
+      document.getElementById("layout-edit-btn").classList.remove("hidden"); // HUD layout editor (Arena only)
     } else {
       document.getElementById("options-screen").classList.add("hidden");   // clean up sub-menus
       document.getElementById("arena-guide-screen").classList.add("hidden");

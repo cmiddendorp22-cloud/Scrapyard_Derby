@@ -493,6 +493,49 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-10** — Weapon-select grid is a 2x2 SQUARE (user): `#weapon-grid`
+  flex-wrap (3+1) → CSS grid `repeat(2, 1fr)`, cards centered per cell.
+  Desktop + mobile screenshots green.
+- **2026-07-10** — Layout editor entry moved to OPTIONS + TAB toggle + ONE-BIG-
+  PANEL menus (user, 3 asks). (1) EDIT HUD LAYOUT left the pause screen: it's
+  now an Options row (HUD LAYOUT: EDIT + RESET, "(TAB)" kbd hint); the button
+  stays Arena-only via the same show/hide in the two togglePause fns. (2) TAB
+  toggles the editor from ANYWHERE in an Arena run: it pauses the world under
+  the editor and exits back to where you came from (`layoutEditReturn`:
+  "options" | "pause" | "resume" — TAB from live play returns straight to
+  play); ESC also exits the editor cleanly (guard at the top of the ESC
+  chain); browser focus-cycling suppressed. (3) EVERY overlay menu's content
+  now sits inside ONE `.menu-panel` container (user pick: flat rows +
+  dividers, applied to ALL overlays): weapon-select, pause, options, both
+  guides, death menu, game-over — wrapped via a depth-matching HTML transform;
+  `.options-row` lost its per-row box (full-width flat line, `+`-sibling
+  divider, label flex-left) and the panel is scrollable at `max-height: 94vh`
+  (start screen untouched — it has its own backlog item). Desktop + mobile
+  screenshots of options/pause/weapon-select green; full regression green.
+- **2026-07-10** — HUD LAYOUT: UI SCALE + drag-to-reposition (user Q&A;
+  closes the backlog item; DISMEMBERMENT-BEYOND-WHEELS dropped from the
+  backlog per user). `ArenaRenderer.layout = {scale, pos}`: four movable
+  CANVAS GROUPS — "hud" (LVL panel + gauges; the DOM stat/loadout column
+  follows via `positionArenaDom`), "minimap" (leaderboard rides along),
+  "killfeed", "bossbar" — each draw fn wrapped by `wrapGroup(key, defX, defY)`
+  (translate→scale→untranslate, so internal draw code runs UNCHANGED; anchors
+  stored as VIEWPORT FRACTIONS = resize/aspect-safe). TOUCH CONTROLS
+  (joystick/FIRE/DRIFT/ability/pause) store window-fraction overrides under
+  "dom:<id>". EDITING: desktop holds **H** and drags (H suppresses firing via
+  `input.layoutEdit` in resolvePlayerInputs); the pause screen's EDIT HUD
+  LAYOUT button (Arena-only; game.js hides it in Gauntlet) hides the overlay
+  for drag-anything mode with a floating DONE — the touch path, but mouse
+  works too. Dashed labelled outlines + a hint render via `drawLayoutEdit`
+  while editing. UI SCALE: one global slider in Options (70-140%) — canvas
+  groups scale in their wraps, DOM panels + touch controls via a `--ui-scale`
+  CSS var (transform: scale). RESET LAYOUT button restores defaults.
+  Persisted per DEVICE TYPE (`sd_layout_desktop`/`sd_layout_touch`) — the
+  {scale, pos} blob is the thing a website account profile syncs per-user
+  later (user). TDZ trap dodged: `fit()` calls the hoisted
+  `applyTouchControlLayout` at boot before module consts init — the id list
+  is inlined there. Preview `?mode=arena&layout[&edit]`. Gated by
+  arena-level-test.js (default anchors, fractional overrides, group hit
+  boxes) + full regression; desktop + mobile + options screenshots green.
 - **2026-07-10** — Center-banner QUEUE (user: too many popups). Only ONE
   center banner shows at a time (`banners[0]`); new ones queue behind it.
   The active banner stays `BANNER_FULL` 3s when nothing waits, yields after

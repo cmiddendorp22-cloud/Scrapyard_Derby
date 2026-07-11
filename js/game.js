@@ -100,6 +100,7 @@ class Game {
     if (this.paused) {
       document.getElementById("guide-btn").classList.remove("hidden"); // Gauntlet has the Field Guide
       document.getElementById("arena-guide-btn").classList.add("hidden"); // ...not the Arena one
+      document.getElementById("layout-edit-btn").classList.add("hidden"); // HUD layout editor is Arena-only
     } else { // resuming closes the sub-menus too
       document.getElementById("guide-screen").classList.add("hidden");
       document.getElementById("options-screen").classList.add("hidden");

@@ -31,12 +31,7 @@ protecting your own).
 
 ### Gameplay / the signature pillar
 
-1. **DISMEMBERMENT BEYOND WHEELS** — wheels shipped (4 per car, closest-wheel
-   chips, mend out of combat). Still open: shooting WEAPONS/ENGINE/ARMOR off a
-   car and re-looting them — the original "shoot their cannon off" chain-of-
-   custody fantasy. Decide whether torn parts drop live or stay-broken like
-   wheels. Extend only if wheels prove fun in playtests.
-2. **MORE WEAPONS** — each needs: player behavior (both platforms), bot AI,
+1. **MORE WEAPONS** — each needs: player behavior (both platforms), bot AI,
    `drawWeaponGear`, tier scaling, loot integration. Idea seeds:
    • FLAMETHROWER — short cone, continuous damage + brief burn DOT.
    • GATLING / MINIGUN — spin-up, high fire rate, low per-shot (weak clashes).
@@ -44,25 +39,25 @@ protecting your own).
    • SHIELD / DEFLECTOR — defensive slot (frontal block / brief bubble).
    • TESLA / CHAIN-ARC — short-range chain lightning, anti-swarm.
    Deferred: "tier adds clash strength" (higher-tier guns win bullet duels).
-3. **ROAMING EVENTS** — periodic announced convergence spots: "scrap storm"
+2. **ROAMING EVENTS** — periodic announced convergence spots: "scrap storm"
    (scrap + part drops rain at a marked spot) and/or a supply-drop mega-crate.
    Was next in the Q&A tour when paused (2026-07-10).
-4. **MORE BOSSES** — Titan + Magnet alternate today (both just got extra
+3. **MORE BOSSES** — Titan + Magnet alternate today (both just got extra
    attacks). Seeds: THE CRUSHER (swinging tethered wrecking ball), THE GUNSHIP
    (glass-cannon barrage), THE SWARM QUEEN (spawns drone adds), THE RECYCLER
    (environmental hazard you survive, not kill). Per boss: distinct mechanic,
    drop tier, minimap marker, whether bots swarm it.
-5. **MINELAYER BOTS FEEL NEWER / MISS MORE (user)** — give minelayer bots a
+4. **MINELAYER BOTS FEEL NEWER / MISS MORE (user)** — give minelayer bots a
    rookie persona band: wider `aimErr`, less `lead`, sloppier throttle/steer,
    slower reactions. Still dangerous via mines/hook, just visibly greener.
-6. **Bots coordinate mines-first-then-hook** — lay a field, THEN drag you in.
-7. **Part tiers carry the source car's quality (open idea)** — killing a
+5. **Bots coordinate mines-first-then-hook** — lay a field, THEN drag you in.
+6. **Part tiers carry the source car's quality (open idea)** — killing a
    high-level car drops better gear; pairs with the leader bounty.
-7b. **POTENTIAL ITEM SET COMBINATIONS (user)** — bonus effects for wearing
+6b. **POTENTIAL ITEM SET COMBINATIONS (user)** — bonus effects for wearing
    matching/combinable parts (e.g. all-same-tier loadout, or themed sets like
    "full uncommon = +5% speed", weapon+tires pairings with a perk). Decide:
    what counts as a set, bonus sizes, how the UI shows an active set.
-8. **PARTS BREAK OVER TIME (idea, user queue)** — overlaps dismemberment;
+7. **PARTS BREAK OVER TIME (idea, user queue)** — overlaps dismemberment;
    decide when that's designed.
 
 ### AI / social
@@ -107,10 +102,7 @@ protecting your own).
     still open: extremes audit (tiny phones, big tablets, tall/narrow, hi-DPI,
     live resize) — no overlap/clipping, hit-target sizes hold up. Screenshot
     several sizes.
-22. **UI SIZE + REPOSITION IN SETTINGS (user)** — UI scale slider + drag-to-
-    move HUD elements (HP bar, minimap, leaderboard, stat panel, touch
-    controls), persisted; needs a small anchoring system that survives resizes.
-23. **BETTER MAIN-MENU SCREEN (user)** — polished title/mode buttons/layout,
+22. **BETTER MAIN-MENU SCREEN (user)** — polished title/mode buttons/layout,
     maybe background art or an animated arena preview. Strip em dashes from all
     UI copy (user preference: commas, colons, hyphens).
 24. **Visible growth polish** — equipped looted parts rendering on the car

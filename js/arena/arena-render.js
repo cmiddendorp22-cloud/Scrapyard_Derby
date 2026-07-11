@@ -61,6 +61,43 @@ class ArenaRenderer {
     this.xhair = { style: "cross", size: 1, color: themeRGB(THEME.playerShot), arc: true };
     this._xhairPrevFrac = 0;
     this._xhairReadyAt = 0;
+    // HUD LAYOUT (user): global scale + per-group position overrides. Groups:
+    // "hud" (LVL panel + gauges; the DOM stat/loadout column follows),
+    // "minimap" (leaderboard follows), "killfeed", "bossbar". Positions are
+    // FRACTIONS of the logical viewport ({fx, fy} of the group's anchor) so
+    // resizes/aspect changes keep them on screen. Set by main.js from
+    // localStorage (per device type; a website-account profile can adopt the
+    // same {scale, pos} blob later).
+    this.layout = { scale: 1, pos: {} };
+  }
+
+  // the anchor a group draws at: its default spot unless the layout overrides it
+  layoutAnchor(key, defX, defY) {
+    const o = this.layout.pos[key];
+    return o ? { x: o.fx * VIEW.w, y: o.fy * VIEW.h } : { x: defX, y: defY };
+  }
+
+  // apply the group's move + scale to the ctx so the draw code inside runs
+  // UNCHANGED: default-space coords map onto the (moved, scaled) anchor.
+  // Caller must ctx.save() before and ctx.restore() after.
+  wrapGroup(key, defX, defY) {
+    const p = this.layoutAnchor(key, defX, defY);
+    const s = this.layout.scale || 1;
+    this.ctx.translate(p.x, p.y);
+    this.ctx.scale(s, s);
+    this.ctx.translate(-defX, -defY);
+  }
+
+  // each movable group's DEFAULT anchor + bounding box (default space) — the
+  // drag code hit-tests and previews with these
+  layoutGroups() {
+    const mmX = VIEW.w - 150 - 14, mmY = this.arena.touchMode ? 104 : 14;
+    return {
+      hud:      { defX: 16, defY: 14, w: 210, h: 126 },
+      minimap:  { defX: mmX, defY: mmY, w: 150, h: 310 }, // leaderboard rides along
+      killfeed: { defX: mmX - 12 - 220, defY: mmY + 4, w: 220, h: 110 },
+      bossbar:  { defX: VIEW.w / 2 - 170, defY: 8, w: 340, h: 36 },
+    };
   }
 
   resetMarks() { this.skids = []; }
@@ -208,6 +245,34 @@ class ArenaRenderer {
     this.drawBanners();
     if (g.dead) this.drawDeathOverlay();
     this.drawCrosshair(); // on top of everything (the OS cursor is hidden in-game)
+    if (g.layoutEditing) this.drawLayoutEdit(); // drag outlines while editing the HUD layout
+  }
+
+  // HUD layout-edit overlay: a dashed, labelled outline around every movable
+  // group at its CURRENT (moved, scaled) spot, plus a how-to hint.
+  drawLayoutEdit() {
+    const ctx = this.ctx, s = this.layout.scale || 1;
+    const groups = this.layoutGroups();
+    ctx.save();
+    for (const key in groups) {
+      const d = groups[key];
+      const a = this.layoutAnchor(key, d.defX, d.defY);
+      ctx.strokeStyle = THEME.accent;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 5]);
+      ctx.strokeRect(a.x - 5, a.y - 5, d.w * s + 10, d.h * s + 10);
+      ctx.setLineDash([]);
+      ctx.fillStyle = THEME.accent;
+      ctx.font = "bold 10px 'Segoe UI', sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(key.toUpperCase(), a.x - 4, a.y - 9);
+    }
+    ctx.fillStyle = THEME.accent;
+    ctx.font = "bold 14px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(this.arena.touchMode ? "DRAG PANELS OR BUTTONS, TAP DONE WHEN FINISHED"
+      : "HUD LAYOUT: DRAG PANELS TO MOVE THEM, TAB OR DONE TO FINISH", VIEW.w / 2, VIEW.h - 24);
+    ctx.restore();
   }
 
   // how far through its cooldown the weapon's DELIBERATE action is (0 = ready)
@@ -757,6 +822,7 @@ class ArenaRenderer {
     // to ~0.54 on the 390px-tall design floor, so clear ~100 canvas px.
     const x0 = VIEW.w - S - PAD, y0 = this.arena.touchMode ? PAD + 90 : PAD;
     ctx.save();
+    this.wrapGroup("minimap", x0, y0); // movable + scalable (layout)
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     pathRoundRect(ctx, x0, y0, S, S, 8);
     ctx.fill();
@@ -823,6 +889,8 @@ class ArenaRenderer {
     if (dist(g.cam.x, g.cam.y, boss.x, boss.y) > 1200) return;
     // drops below the spectate button row when it's up
     const w = 320, h = 9, x = (VIEW.w - w) / 2, y = g.spectate ? 64 : 16;
+    ctx.save();
+    this.wrapGroup("bossbar", VIEW.w / 2 - 170, 8); // movable + scalable (layout)
     const magnet = boss.kind === "magnet", vul = magnet && boss.isVulnerable && boss.isVulnerable();
     ctx.save();
     ctx.textAlign = "center";
@@ -840,6 +908,7 @@ class ArenaRenderer {
     ctx.fillStyle = magnet ? (vul ? THEME.overload : THEME.boss) : THEME.warn;
     ctx.fillRect(x, y, w * boss.hpFrac(), h);
     ctx.restore();
+    ctx.restore(); // close the layout wrap
   }
 
   // live standings under the minimap: rank · name · level. The #1 (bounty
@@ -854,6 +923,8 @@ class ArenaRenderer {
     const rows = Math.min(g.touchMode ? 3 : 5, lb.length);
     const headH = 16, rowH = 15, h = headH + rows * rowH + 4;
     ctx.save();
+    // rides with the MINIMAP group (grouped cluster — same wrap key/defaults)
+    this.wrapGroup("minimap", x0, g.touchMode ? PAD + 90 : PAD);
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     pathRoundRect(ctx, x0, top, S, h, 8);
     ctx.fill();
@@ -892,6 +963,7 @@ class ArenaRenderer {
     const rows = Math.min(compact ? 3 : 6, fk.length);
     const fs = compact ? 10 : 12, lh = compact ? 14 : 16;
     ctx.save();
+    this.wrapGroup("killfeed", rightX - 220, topY - 8); // movable + scalable (layout)
     ctx.textAlign = "right";
     ctx.font = fs + "px 'Segoe UI', sans-serif";
     for (let i = 0; i < rows; i++) {
@@ -923,6 +995,8 @@ class ArenaRenderer {
     const statPoints = bot ? (bot.statPoints || 0) : g.statPoints;
     const maxed = level >= LEVEL_CAP;
     const xpFrac = maxed ? 1 : (bot ? clamp(bot.xp / arenaXpToNext(bot.level), 0, 1) : clamp(g.xp / g.xpToNext(), 0, 1));
+    ctx.save();
+    this.wrapGroup("hud", 16, 14); // movable + scalable (layout); gauges ride along
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     pathRoundRect(ctx, 16, 14, 210, 94, 8);
@@ -1013,6 +1087,7 @@ class ArenaRenderer {
       ctx.fillRect(84, 123, 130 * val, 9);
       ctx.restore();
     }
+    ctx.restore(); // close the layout wrap
   }
 
   drawBanners() {
