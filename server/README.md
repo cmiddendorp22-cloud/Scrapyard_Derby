@@ -102,23 +102,51 @@ ROOM=TEST node test-client.js    # one ws client joins + drives + gets snapshots
 ROOM=TEST node test-two.js       # two clients see each other's cars
 ```
 
-## Hosting on a real always-on host (later, needs a card)
+## Hosting on a real always-on host (bigger provider)
 
 The Dockerfile at the repo root builds a host-agnostic server image (Railway /
-Render / Fly / a VPS). The client stays on Netlify (static); point it at
-`wss://<your-server>` once it's behind TLS.
+Render / Fly / a VPS) — non-root, with a `/` health check, and it listens on the
+host-injected `$PORT`. The client stays on Netlify (static); point it at
+`wss://<your-server>` once it's behind TLS. Most of these providers terminate TLS
+at their edge, so your server speaks plain `ws` internally and clients still use
+`wss://` — that just works.
+
+### Environment variables
+
+| var | default | notes |
+|-----|---------|-------|
+| `PORT` | `8090` | host-injected on most providers — don't hardcode |
+| `ROOM_CODE` | random 5-char | pin it so friends have a stable code |
+| `MAX_PLAYERS` | `12` | human cap per world (bots fill the rest) |
+| `MAX_PER_IP` | `3` | concurrent connections per address |
+| `TRUST_PROXY` | off | set `1` behind a load balancer so the per-IP cap reads the real client IP from `X-Forwarded-For` |
+
+The server handles `SIGTERM`/`SIGINT` (graceful shutdown: closes sockets + the
+listener), so rolling deploys / autoscaling restarts don't drop it mid-tick.
+
+### Scaling boundary (read before you scale)
+
+One process runs **one authoritative world** (a single shared arena). That's the
+right model for a friends game and is CPU-cheap. To host *more* concurrent games,
+run **more instances** (each its own world + room code) behind the provider — the
+sim has no shared global state between processes, so instances are independent.
+A single-process **multi-room** manager (many worlds in one server, matchmaking)
+is a future step if you want lobby-style scaling; nothing here blocks it.
 
 ## Protocol (M1, JSON — compact/binary in M2)
 
 - Client → server: `{type:"join", room, name}` FIRST (required), then
-  `{type:"input", throttle, steer, handbrake, fire, mouseDown, hookHeld,
-  ability, autoFire, aim}` per frame, plus `{type:"spendStat", name}`,
+  `{type:"input", seq, throttle, steer, handbrake, fire, mouseDown, hookHeld,
+  ability, autoFire, aim}` per frame (`seq` is a monotonic input id for
+  prediction/reconciliation), plus `{type:"spendStat", name}`,
   `{type:"respawn", weapon}`, and `{type:"name", name}`.
 - Server → client: `{type:"welcome", id, arena, view}` on join (or
   `{type:"reject", reason}` + close), then `{type:"snap", self, cars, bullets,
   mines, boss, scrap, crates, drops}` ~20 Hz. Each car has id/x/y/heading/hp/
   name/level/weapon; the receiving client's OWN car also carries
-  xp/statPoints/stats/slots; `boss` includes its radius.
+  xp/statPoints/stats/slots, plus `ack` (last input seq applied), its velocity
+  `vx/vy`, and drive-physics params `ms/ac/tr/gr/dg/hb` (so the client predicts
+  it with matching physics); `boss` includes its radius.
 
 The browser client for all this is `js/net.js` (`NetClient`) + the online-mode
 glue in `js/main.js` (`applyOnlineSnapshot`/`onlineFrame`). Dev hook:

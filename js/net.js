@@ -21,11 +21,14 @@ class NetClient {
     this._carCache = new Map(); // netId → Car (reused across snapshots)
     this._buf = [];          // recent {t, m} snapshots for interpolation (M2)
     this.lastSnapAt = 0;     // client clock time the latest snapshot arrived
+    this.inputSeq = 0;       // monotonic input id (M3 prediction/reconciliation)
+    this.pending = [];       // unacked local inputs {seq, throttle, steer, handbrake, dt}
   }
 
   connect(url, room, name) {
     this.close();
     this.selfId = null; this.snap = null; this._carCache.clear(); this._buf.length = 0; this.lastSnapAt = 0;
+    this.inputSeq = 0; this.pending.length = 0;
     this._set("connecting", "");
     if (typeof WebSocket === "undefined") { this._set("error", "no WebSocket in this browser"); return; }
     let ws;

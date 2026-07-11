@@ -22,4 +22,12 @@ COPY . .
 
 ENV NODE_ENV=production
 EXPOSE 8090
+
+# health check for the provider's load balancer / orchestrator (busybox wget).
+# honors $PORT the same way the server does.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:${PORT:-8090}/" >/dev/null 2>&1 || exit 1
+
+# drop root — the node image ships an unprivileged `node` user
+USER node
 CMD ["node", "server/server.js"]

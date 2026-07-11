@@ -539,6 +539,35 @@ cascade bug that text-only testing never would.
   run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
   input, and RENDER server snapshots (stop local simming); then M2 interpolation.
   The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-07-11** — MULTIPLAYER M3 (client PREDICTION + reconciliation) + host
+  hardening for a bigger provider. PREDICTION: the local car now drives
+  immediately off input (no round-trip lag). Each input carries a monotonic
+  `seq` (`NetClient.inputSeq`/`pending`); `predictDrive` integrates the local
+  car forward every frame with the SAME physics + wall-clamp the server uses.
+  RECONCILIATION: each snapshot the server echoes `ack` (last input seq it
+  applied) + the self car's `vx/vy` and drive params (`ms/ac/tr/gr/dg/hb` —
+  they change with stats/parts, so the client must predict with matching
+  physics); `reconcileSelf` drops acked inputs, resets a scratch car to the
+  authoritative state, REPLAYS the still-unacked inputs, then eases the real
+  car toward that result (`RECON_SMOOTH` 0.35; hard-snaps past `RECON_SNAP`
+  250px = respawn/teleport). The self car's position is now owned by
+  prediction (interpolation still smooths REMOTE cars + boss from M2; bullets
+  extrapolate; static entities latest). Ram-boost/collision divergence is
+  transient and corrected on the next snapshot. HOST HARDENING (user:
+  "scalable into a bigger provider"): server honors `SIGTERM`/`SIGINT`
+  (graceful shutdown — closes sockets + listener, hard-cap 3s), reads the real
+  client IP from `X-Forwarded-For` when `TRUST_PROXY=1` (per-IP cap works
+  behind a load balancer), still binds host-injected `$PORT`; the root
+  Dockerfile now runs NON-ROOT (`node` user) with a `/` HEALTHCHECK. README
+  documents the env-var table + the scaling boundary (one process = one
+  authoritative world; run more instances for more games; multi-room manager
+  is a future step, nothing blocks it). Gated by interp-test.js (unchanged,
+  8/8) + a live m3-protocol test (server echoes advancing `ack` + velocity +
+  physics params; seq'd input drives the car, 7/7) + full 6-suite regression
+  green + live screenshot (predicted self car drives responsively, LVL 2,
+  HUD/leaderboard/minimap intact). NEXT (M4/polish): online loot/loadout UI
+  (equip is server-side, panel hidden); reconnect + room-list; snapshot
+  delta/binary compression; optional single-process multi-room.
 - **2026-07-11** — MULTIPLAYER M2 (client smoothing): INTERPOLATION so the
   ~20Hz server snapshots render as smooth 60fps motion. `NetClient` now keeps a
   small ring BUFFER of recent snapshots (`_buf`, last 12, with client-clock

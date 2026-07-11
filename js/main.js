@@ -1076,8 +1076,14 @@
       name: b.kind === "magnet" ? "THE MAGNET" : "JUNK TITAN", tagline: "" };
   }
   const INTERP_DELAY = 100;   // ms behind live: render remote entities interpolated in the past
-  const SELF_SMOOTH = 0.35;   // self car eases toward the latest authoritative pos (no interp lag)
+  const RECON_SNAP = 250;     // px error above which reconciliation hard-snaps (respawn/teleport)
+  const RECON_SMOOTH = 0.35;  // else ease the self car toward the reconciled pos (hides pops)
   function lerpAngleM(a, b, f) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * f; }
+  function applySelfPhysics(car, c) { // keep the predicted car's drive params matched to the server's
+    if (!c || !c.ms) return;
+    car.maxSpeed = c.ms; car.engineAccel = c.ac; car.turnRate = c.tr;
+    car.grip = c.gr; car.drag = c.dg; car.handbrakeBoost = c.hb;
+  }
   function applyOnlineSnapshot() {
     const snap = net.snap; if (!snap) return;
     const nowMs = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
@@ -1092,10 +1098,9 @@
       if (!car) { car = new Car(c.x, c.y, c.h); cache.set(c.id, car); }
       const isSelf = c.k === "p" && c.id === net.selfId;
       if (isSelf) {
-        // smooth toward latest (snap hard on respawn/teleport)
-        const dx = c.x - car.x, dy = c.y - car.y;
-        if (fresh || Math.hypot(dx, dy) > 220) { car.x = c.x; car.y = c.y; car.heading = c.h; }
-        else { car.x += dx * SELF_SMOOTH; car.y += dy * SELF_SMOOTH; car.heading = lerpAngleM(car.heading, c.h, SELF_SMOOTH); }
+        // the self car's position is owned by client prediction + reconciliation
+        // (predictDrive / reconcileSelf); only seed it on first sight
+        if (fresh) { car.x = c.x; car.y = c.y; car.heading = c.h; car.vx = c.vx || 0; car.vy = c.vy || 0; applySelfPhysics(car, c); }
       } else if (interp && interp.cars.has(c.id)) {
         const p = interp.cars.get(c.id); car.x = p.x; car.y = p.y; car.heading = p.h;
       } else { car.x = c.x; car.y = c.y; car.heading = c.h; }
@@ -1145,16 +1150,64 @@
       arena.cam.y = clamp(selfCar.y, VIEW.h / 2, ARENA.h - VIEW.h / 2);
     }
   }
+  // -- M3 client-side prediction: drive the LOCAL car immediately on input (no
+  // round-trip lag), then reconcile against the server each snapshot by
+  // replaying still-unacked inputs from the authoritative state. Matches the
+  // server's drive + wall-clamp exactly (physics params come down per snapshot).
+  function predictDrive(car, d, dt) {
+    car.integrate(dt, d.throttle, d.steer, !!d.handbrake);
+    const m = ARENA.wall + car.radius;
+    if (car.x < m) { car.x = m; if (car.vx < 0) car.vx *= -0.4; }
+    else if (car.x > ARENA.w - m) { car.x = ARENA.w - m; if (car.vx > 0) car.vx *= -0.4; }
+    if (car.y < m) { car.y = m; if (car.vy < 0) car.vy *= -0.4; }
+    else if (car.y > ARENA.h - m) { car.y = ARENA.h - m; if (car.vy > 0) car.vy *= -0.4; }
+  }
+  const reconScratch = new Car(0, 0, 0);
+  function reconcileSelf() {
+    const snap = net.snap; if (!snap || net.selfId == null) return;
+    const s = snap.cars.find((c) => c.id === net.selfId);
+    const car = net._carCache.get(net.selfId);
+    if (!s || !car) return;
+    applySelfPhysics(car, s);
+    const ack = s.ack || 0;
+    while (net.pending.length && net.pending[0].seq <= ack) net.pending.shift();
+    // replay the unacked inputs from the authoritative state on a scratch car
+    const sc = reconScratch;
+    sc.x = s.x; sc.y = s.y; sc.heading = s.h; sc.vx = s.vx || 0; sc.vy = s.vy || 0; sc.boost = 1;
+    sc.maxSpeed = car.maxSpeed; sc.engineAccel = car.engineAccel; sc.turnRate = car.turnRate;
+    sc.grip = car.grip; sc.drag = car.drag; sc.handbrakeBoost = car.handbrakeBoost; sc.radius = car.radius;
+    for (const pinp of net.pending) predictDrive(sc, pinp, pinp.dt);
+    const err = Math.hypot(sc.x - car.x, sc.y - car.y);
+    const dead = arena.localPlayer && arena.localPlayer.dead;
+    if (err > RECON_SNAP || dead) { car.x = sc.x; car.y = sc.y; car.heading = sc.heading; car.vx = sc.vx; car.vy = sc.vy; }
+    else {
+      car.x += (sc.x - car.x) * RECON_SMOOTH; car.y += (sc.y - car.y) * RECON_SMOOTH;
+      car.heading = lerpAngleM(car.heading, sc.heading, RECON_SMOOTH);
+      car.vx = sc.vx; car.vy = sc.vy;
+    }
+  }
+  let lastOnlineMs = 0, lastReconSnap = null;
   function onlineFrame() {
+    const nowMs = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    let dt = lastOnlineMs ? (nowMs - lastOnlineMs) / 1000 : STEP;
+    dt = Math.max(0.001, Math.min(0.05, dt));
+    lastOnlineMs = nowMs;
     const inp = arena.input;
-    const selfCar = arena.localPlayer && arena.localPlayer.car;
+    const selfCar = net.selfId != null ? net._carCache.get(net.selfId) : null;
+    const dead = arena.localPlayer && arena.localPlayer.dead;
     const d = readDrive(inp, selfCar ? selfCar.heading : 0);
     const aim = arena.mouseWorldAngle();
     if (window.__autodrive) { d.throttle = window.__autodrive.t; d.steer = window.__autodrive.s; } // DEV-ONLY separation hook
-    net.sendInput({ throttle: d.throttle, steer: d.steer, handbrake: !!d.handbrake,
+    const seq = ++net.inputSeq;
+    net.sendInput({ seq, throttle: d.throttle, steer: d.steer, handbrake: !!d.handbrake,
       fire: !!inp.fire, mouseDown: !!inp.mouseDown, hookHeld: !!inp.hookHeld,
       ability: !!inp.touchAbility1, autoFire: !!inp.autoFire,
       aim: (aim === null || aim === undefined) ? undefined : aim });
+    net.pending.push({ seq, throttle: d.throttle, steer: d.steer, handbrake: !!d.handbrake, dt });
+    if (net.pending.length > 180) net.pending.shift();
+    const newSnap = net.snap && net.snap !== lastReconSnap;
+    if (newSnap) { lastReconSnap = net.snap; reconcileSelf(); } // correct against authority
+    else if (selfCar && !dead) predictDrive(selfCar, d, dt); // predict forward between snapshots
     applyOnlineSnapshot();
     arena.renderer.draw();
     updateArenaStatsUI();

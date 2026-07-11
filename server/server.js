@@ -31,6 +31,13 @@ const MAX_PLAYERS = parseInt(process.env.MAX_PLAYERS, 10) || 12; // human cap (b
 const MAX_PER_IP = parseInt(process.env.MAX_PER_IP, 10) || 3;    // concurrent conns from one address
 const JOIN_TIMEOUT_MS = 5000;       // close a connection that never sends a valid join
 const MSG_PER_SEC = 240;            // per-connection message-rate ceiling (drops floods)
+// behind a bigger provider's load balancer the socket IP is the proxy's, so the
+// per-IP cap needs the real client IP from X-Forwarded-For — opt in with TRUST_PROXY=1
+const TRUST_PROXY = /^(1|true|yes)$/i.test(process.env.TRUST_PROXY || "");
+function clientIp(req) {
+  if (TRUST_PROXY) { const xf = req.headers["x-forwarded-for"]; if (xf) return String(xf).split(",")[0].trim(); }
+  return String(req.socket.remoteAddress || "?").replace(/^::ffff:/, "");
+}
 
 const world = createWorld();
 let nextId = 1;
@@ -77,6 +84,12 @@ function snapshot(selfId) {
       hp: r(pl.hp), mhp: r(pl.maxHp), n: pl.name, lv: pl.level, w, dead: !!pl.dead };
     if (pl.netId === selfId) { // the receiving client's own HUD detail
       c.xp = r(pl.xp); c.sp = pl.statPoints; c.st = pl.stats; c.slots = pl.slots;
+      // M3 client prediction/reconciliation: echo the last input seq we applied
+      // + the car's velocity and drive-physics params (which change with
+      // stats/parts) so the client predicts this car with matching physics.
+      c.ack = pl._lastSeq || 0; c.vx = r(pl.car.vx); c.vy = r(pl.car.vy);
+      c.ms = r(pl.car.maxSpeed); c.ac = r(pl.car.engineAccel); c.tr = r3(pl.car.turnRate);
+      c.gr = r3(pl.car.grip); c.dg = r3(pl.car.drag); c.hb = r3(pl.car.handbrakeBoost);
     }
     cars.push(c);
   }
@@ -109,7 +122,7 @@ const httpServer = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on("connection", (ws, req) => {
-  const ip = String(req.socket.remoteAddress || "?").replace(/^::ffff:/, "");
+  const ip = clientIp(req);
   ipCount.set(ip, (ipCount.get(ip) || 0) + 1);
   let joined = false, player = null, msgCount = 0;
   const rateReset = setInterval(() => { msgCount = 0; }, 1000);
@@ -151,6 +164,7 @@ wss.on("connection", (ws, req) => {
 
     if (msg.type === "input") {
       const inp = player.input;
+      if (typeof msg.seq === "number") player._lastSeq = msg.seq; // for client reconciliation
       inp.throttle = clampNum(msg.throttle); inp.steer = clampNum(msg.steer);
       inp.handbrake = !!msg.handbrake; inp.fire = !!msg.fire;
       inp.mouseDown = !!msg.mouseDown; inp.hookHeld = !!msg.hookHeld;
@@ -172,7 +186,7 @@ function clampNum(v) { v = +v; return Number.isFinite(v) ? Math.max(-1, Math.min
 
 // -- fixed-timestep authoritative loop + throttled snapshot broadcast ---
 let tick = 0, last = Date.now(), acc = 0;
-setInterval(() => {
+const tickHandle = setInterval(() => {
   const now = Date.now();
   acc += (now - last) / 1000; last = now;
   if (acc > 0.25) acc = 0.25; // after a stall, skip rather than spiral
@@ -191,3 +205,17 @@ httpServer.listen(PORT, "0.0.0.0", () => {
   console.log("└─────────────────────────────────────────────┘");
   console.log("  caps: " + MAX_PLAYERS + " players, " + MAX_PER_IP + " conns/IP. Set ROOM_CODE=... to pin the code.");
 });
+
+// graceful shutdown: bigger hosts send SIGTERM on deploy/scale/restart — close
+// sockets + the listener cleanly instead of dropping the process mid-tick
+let shuttingDown = false;
+function shutdown(sig) {
+  if (shuttingDown) return; shuttingDown = true;
+  console.log("shutting down (" + sig + ")…");
+  clearInterval(tickHandle);
+  for (const ws of wss.clients) { try { ws.close(1001, "server shutting down"); } catch (_) {} }
+  wss.close(() => httpServer.close(() => process.exit(0)));
+  setTimeout(() => process.exit(0), 3000).unref(); // hard cap if a socket hangs
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
