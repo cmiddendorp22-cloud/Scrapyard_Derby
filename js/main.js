@@ -1235,12 +1235,34 @@
     } catch (_) {}
     const setStatus = (t, cls) => { if (statusEl) { statusEl.textContent = t || ""; statusEl.className = cls || ""; } };
     const openOnline = () => { document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); setStatus("", ""); };
+    // client-side input sanitizing (defense-in-depth; the server re-validates
+    // everything authoritatively). Mirrors the server's rules so the UI shows
+    // the same name the server will.
+    const cleanName = (s) => String(s || "").replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "").replace(/\s+/g, " ").trim().slice(0, 14);
+    const cleanRoom = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16);
+    // only ws:// or wss:// may reach the WebSocket ctor; map http(s) for
+    // convenience and reject anything exotic (javascript:, data:, file:, …)
+    const normalizeUrl = (raw) => {
+      let u = String(raw || "").trim().slice(0, 200);
+      if (!u) return { err: "enter a server address" };
+      if (/^https:\/\//i.test(u)) u = "wss://" + u.slice(8);
+      else if (/^http:\/\//i.test(u)) u = "ws://" + u.slice(7);
+      else if (!/^wss?:\/\//i.test(u)) {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return { err: "use a ws:// or wss:// address" }; // some other scheme
+        u = "wss://" + u; // bare host → wss
+      }
+      if (typeof location !== "undefined" && location.protocol === "https:" && /^ws:\/\//i.test(u)) {
+        return { err: "this page is https, so it needs a wss:// server" }; // mixed content would be blocked
+      }
+      return { url: u };
+    };
     const doJoin = () => {
-      let url = (urlEl.value || "").trim();
-      const room = (roomEl.value || "").trim();
-      const name = (nameEl.value || "").trim() || "PLAYER";
-      if (!url) return setStatus("enter a server address", "err");
-      if (!/^wss?:\/\//i.test(url)) url = "wss://" + url; // bare host → wss
+      const parsed = normalizeUrl(urlEl.value);
+      if (parsed.err) return setStatus(parsed.err, "err");
+      const url = parsed.url;
+      const room = cleanRoom(roomEl.value);
+      const name = cleanName(nameEl.value) || "PLAYER";
+      urlEl.value = url; roomEl.value = room; nameEl.value = name; // reflect the cleaned values
       try { localStorage.setItem("sd_srv", url); localStorage.setItem("sd_room", room); localStorage.setItem("sd_name", name); } catch (_) {}
       arena.playerName = name;
       setStatus("connecting…", "");

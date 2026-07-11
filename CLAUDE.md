@@ -539,6 +539,39 @@ cascade bug that text-only testing never would.
   run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
   input, and RENDER server snapshots (stop local simming); then M2 interpolation.
   The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-07-11** — SECURITY pass (input handling + text boxes + web hardening,
+  user request). SERVER (the trust boundary — every field off the wire is
+  untrusted): `sanitizeName` strips C0/C1 controls + zero-width + bidi-override
+  formatting chars (spoof/HUD-corruption vectors), collapses whitespace, clamps
+  to 14, never empty — applied to join + rename (names are BROADCAST to and
+  drawn by other clients). `spendStat` now takes an ALLOWLIST (health/speed/
+  reload/regen — the old `name in stats` matched prototype keys like
+  `toString`/`__proto__`); `respawn` weapon is allowlisted (cannon/shotgun/
+  minelayer/ram/railgun, else falls back). Numeric inputs use `Number.isFinite`
+  (JSON `1e999` parses to Infinity → rejected; wrong types → ignored; throttle/
+  steer already clamped). `ws` `maxPayload: 4096` caps a single message (floods
+  close with 1009, server unaffected). Opt-in Origin allowlist (`ALLOW_ORIGINS`)
+  for a public deploy. CLIENT text boxes (defense-in-depth, server re-validates):
+  `cleanName`/`cleanRoom` mirror the server rules and reflect the cleaned value
+  back into the field; `normalizeUrl` only lets ws://|wss:// reach the
+  WebSocket ctor (maps http(s)→ws(s), rejects javascript:/data:/file:/other
+  schemes, blocks ws:// from an https page = mixed content), caps length; the
+  SERVER `<input>` gained `maxlength=200`. STATIC-SITE hardening: new root
+  `_headers` (Netlify) sets a strict CSP (`script-src 'self'` — no inline JS in
+  the app, verified; `connect-src 'self' ws: wss:` for the game socket;
+  `object-src/base-uri/form-action/frame-ancestors` locked) + `X-Frame-Options`
+  DENY, `nosniff`, `no-referrer`, COOP; `serve.js` mirrors those headers and
+  adds GET/HEAD-only, null-byte + tightened path-traversal guards. XSS surface
+  audited clean: all user text (names/leaderboard/killfeed) renders on CANVAS
+  (`fillText`), never `innerHTML`; every `innerHTML` sink writes `""` or a
+  static string. Gated by two live tests (server sec-test: hostile name
+  sanitized + clamped, proto-pollution/bad-weapon/Infinity/wrong-type barrage
+  leaves the server ticking with finite state; payload-test: 6KB msg closed
+  1009 + fresh client unaffected) + CSP render check (Arena draws fully under
+  the strict policy) + full 6-suite regression green. NOTE: editing source with
+  regex `\u`/`\s` escapes via Bash heredoc/`node -e` mangles backslashes
+  through shell+JSON — use the Write tool (literal) or build the class from
+  char codes.
 - **2026-07-11** — MULTIPLAYER M3 (client PREDICTION + reconciliation) + host
   hardening for a bigger provider. PREDICTION: the local car now drives
   immediately off input (no round-trip lag). Each input carries a monotonic

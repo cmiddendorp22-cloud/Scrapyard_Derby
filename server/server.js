@@ -26,6 +26,22 @@ const STEP = 1 / TICK_HZ;
 //     link" shouldn't be a free-for-all): a ROOM CODE gates joins, plus caps
 //     on total players, connections per IP, and message rate. ---
 function genRoomCode() { const a = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; let s = ""; for (let i = 0; i < 5; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+
+// -- input validation at the trust boundary. Every field off the wire is
+//    untrusted: names are BROADCAST to (and drawn by) other clients, and
+//    stat/weapon strings index into game state, so both are sanitized here. --
+const MAX_NAME = 14;
+// display name: strip control/formatting chars (incl. zero-width + bidi
+// overrides that could spoof or corrupt other players' HUDs), collapse
+// whitespace, clamp length, and never allow empty.
+function sanitizeName(raw) {
+  let s = String(raw == null ? "" : raw);
+  s = s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "");
+  s = s.replace(/\s+/g, " ").trim().slice(0, MAX_NAME);
+  return s.length ? s : "PLAYER";
+}
+const STAT_KEYS = ["health", "speed", "reload", "regen"];              // spendStat allowlist
+const WEAPON_TYPES = ["cannon", "shotgun", "minelayer", "ram", "railgun"]; // respawn allowlist
 const ROOM_CODE = String(process.env.ROOM_CODE || genRoomCode()).toUpperCase();
 const MAX_PLAYERS = parseInt(process.env.MAX_PLAYERS, 10) || 12; // human cap (bots fill the rest)
 const MAX_PER_IP = parseInt(process.env.MAX_PER_IP, 10) || 3;    // concurrent conns from one address
@@ -54,7 +70,7 @@ function freshInput() {
 
 function addPlayer(name) {
   const p = new sim.ArenaPlayer();
-  p.name = (name || "PLAYER").slice(0, 14);
+  p.name = sanitizeName(name);
   p.input = freshInput();
   p.aimAngle = 0;
   const sp = world.playerSpawn();
@@ -119,7 +135,18 @@ const httpServer = http.createServer((req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
   res.end("Scrapyard Arena server OK — players: " + world.players.length + " / bots: " + world.bots.length);
 });
-const wss = new WebSocketServer({ server: httpServer });
+// maxPayload caps a single message (inputs are tiny — 4KB is generous); stops a
+// client from forcing huge allocations. Origin allowlist is opt-in for a public
+// deploy (ALLOW_ORIGINS="https://your.site,https://other"); off = accept any
+// (self-hosting from file://, localhost, etc. sends no/varied Origin).
+const ALLOW_ORIGINS = (process.env.ALLOW_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const wss = new WebSocketServer({
+  server: httpServer,
+  maxPayload: 4096,
+  verifyClient: ALLOW_ORIGINS.length
+    ? (info) => ALLOW_ORIGINS.includes(info.origin)
+    : undefined,
+});
 
 wss.on("connection", (ws, req) => {
   const ip = clientIp(req);
@@ -164,18 +191,18 @@ wss.on("connection", (ws, req) => {
 
     if (msg.type === "input") {
       const inp = player.input;
-      if (typeof msg.seq === "number") player._lastSeq = msg.seq; // for client reconciliation
+      if (Number.isFinite(msg.seq)) player._lastSeq = msg.seq; // for client reconciliation
       inp.throttle = clampNum(msg.throttle); inp.steer = clampNum(msg.steer);
       inp.handbrake = !!msg.handbrake; inp.fire = !!msg.fire;
       inp.mouseDown = !!msg.mouseDown; inp.hookHeld = !!msg.hookHeld;
       inp.touchAbility1 = !!msg.ability; inp.autoFire = !!msg.autoFire;
-      if (typeof msg.aim === "number") player.aimAngle = msg.aim;
-    } else if (msg.type === "name" && typeof msg.name === "string") {
-      player.name = msg.name.slice(0, 14);
-    } else if (msg.type === "spendStat" && typeof msg.name === "string") {
-      world.spendStat(msg.name, player);
+      if (Number.isFinite(msg.aim)) player.aimAngle = msg.aim; // reject NaN/Infinity
+    } else if (msg.type === "name") {
+      player.name = sanitizeName(msg.name);
+    } else if (msg.type === "spendStat") {
+      if (STAT_KEYS.includes(msg.name)) world.spendStat(msg.name, player); // allowlist only
     } else if (msg.type === "respawn") {
-      if (player.dead) world.respawnPlayer(msg.weapon, player);
+      if (player.dead) world.respawnPlayer(WEAPON_TYPES.includes(msg.weapon) ? msg.weapon : undefined, player);
     }
   });
 
