@@ -264,7 +264,7 @@
     // BOSSES
     section("CENTRAL BOSSES · alternate on respawn");
     row(null, "JUNK TITAN", "A huge stationary tank: 4 armor plates around a core. Tear off the plate facing you, then shoot the exposed core through the gap. Drops a rare+ part.");
-    row(null, "THE MAGNET", "A roaming gravity well — it drags you inward (fight it with throttle) and periodically MEGA-PULLS for heavy damage. Armored EXCEPT during the OVERLOAD window right after a mega-pull. Lure MINES into it (they bypass its armor); keep scrap away (scrap heals it).");
+    row(null, "THE MAGNET", "A roaming gravity well — it drags you inward (fight it with throttle) and periodically MEGA-PULLS for heavy damage. Armored EXCEPT during the OVERLOAD window right after a mega-pull; the only thing that pierces the armor is a HOOK detonation. Keep scrap away (scrap heals it).");
   }
   function openArenaGuide() {
     buildArenaGuide();

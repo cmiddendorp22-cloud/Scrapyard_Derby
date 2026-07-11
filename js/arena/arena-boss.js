@@ -232,8 +232,9 @@ class ArenaMagnet {
       s.x += (dx / d) * pull * dt; s.y += (dy / d) * pull * dt;
       if (d < this.radius + 12) { this.coreHp = Math.min(this.coreMax, this.coreHp + s.amount * 0.25); s.dead = true; }
     }
-    // pull MINES toward the core (metal drags faster) — reaching it HURTS it
-    // (its weakness: lure mines in). Credited to the mine's owner.
+    // pull MINES toward the core (metal drags faster). Reaching it only HURTS
+    // during the OVERLOAD window (user rule: outside overload, ONLY the hook
+    // blast damages the Magnet) — armored, they just pop harmlessly on the hull.
     for (const m of game.mines) {
       if (m.dead) continue;
       const dx = this.x - m.x, dy = this.y - m.y, d = Math.hypot(dx, dy) || 1;
@@ -242,11 +243,16 @@ class ArenaMagnet {
       m.x += (dx / d) * pull * dt; m.y += (dy / d) * pull * dt;
       if (d < this.radius + 14) {
         m.dead = true;
-        this.coreHp -= m.dmg * 3; // mines bypass its armor — the intended counter
-        this.hitFlash = 0.16; this.lastHitBy = m.owner;
         game.particles.explosion(m.x, m.y);
-        if (game.audio.playExplosion) game.audio.playExplosion();
-        if (this.coreHp <= 0) { this.dead = true; game.killBoss(m.owner); return; }
+        if (this.isVulnerable()) {
+          this.coreHp -= m.dmg * 3; // overloaded: mines chunk the exposed core
+          this.hitFlash = 0.16; this.lastHitBy = m.owner;
+          if (game.audio.playExplosion) game.audio.playExplosion();
+          if (this.coreHp <= 0) { this.dead = true; game.killBoss(m.owner); return; }
+        } else {
+          this.hitFlash = 0.06; // armored: a harmless pop + clank
+          if (game.audio.playClank) game.audio.playClank();
+        }
       }
     }
 

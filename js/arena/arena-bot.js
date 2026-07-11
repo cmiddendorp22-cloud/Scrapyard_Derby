@@ -725,10 +725,10 @@ class ArenaBot extends Car {
       // fire across a wide arc (shots lead + auto-aim, so the nose need not be
       // dead-on) — the arc width is a persona roll: patient vs spray-and-pray
       wantFire = this.weapon !== "ram" && Math.abs(aim) < P.fireArc;
-      // vs the MAGNET: gun bots BAIT the overload (hold fire until it's
-      // vulnerable — shots just bounce otherwise), but minelayers keep feeding
-      // mines into the pull anytime (mines bypass its armor — its weakness)
-      if (magnetTarget && !magnetVuln && this.weapon !== "minelayer") wantFire = false;
+      // vs the MAGNET: EVERY bot baits the overload — the armor now blocks
+      // everything but the hook blast (user rule), so mines fired early would
+      // just clank off. Minelayers contribute their HOOK anytime instead.
+      if (magnetTarget && !magnetVuln) wantFire = false;
     } else {
       this.offNoseT = 0;
       // loot: an uncontested part UPGRADE in range beats farming

@@ -570,11 +570,12 @@ class ArenaGame {
           }
         }
         // else grab the central BOSS — too big to pull, so the reel drags YOU to
-        // IT (user); chips it on the grab, bypassing the Magnet's armor
+        // IT (user). The grab CHIP respects the Magnet's armor (user rule:
+        // outside overload only the hook BLAST hurts it — see hookBossImpact).
         if (h.state === "out" && this.boss && !this.boss.dead &&
             dist(h.hx, h.hy, this.boss.x, this.boss.y) < HOOK_HEAD_R + this.boss.radius) {
           h.state = "reel"; h.target = this.boss; h.reelT = 0; owner.reelingBoss = true;
-          this.hurtBoss(h.hx, h.hy, HOOK_DAMAGE, owner, true);
+          this.hurtBoss(h.hx, h.hy, HOOK_DAMAGE, owner);
           if (this.audio.playImpact) this.audio.playImpact(0.4);
         }
         if (h.state === "out" && (h.len >= HOOK_MAX_LEN ||
@@ -1012,8 +1013,9 @@ class ArenaGame {
     boss.lastHitBy = source;
     boss.hitFlash = 0.1;
     // THE MAGNET has no plates — it's armored EXCEPT during its overload window
-    // (bait the mega-pull, then burn the exposed core). Mines + the hook blast
-    // bypass this (its weakness).
+    // (bait the mega-pull, then burn the exposed core). ONLY the hook BLAST
+    // bypasses the armor (user rule) — everything else clanks off until it
+    // overloads, including mines and the hook's grab chip.
     if (boss.kind === "magnet") {
       if (!bypass && !boss.isVulnerable()) { boss.hitFlash = 0.06; if (this.audio.playClank) this.audio.playClank(); return; }
       boss.coreHp -= amount;

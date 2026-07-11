@@ -493,6 +493,19 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-10** — Magnet armor HARDENED (user bug report + rule change):
+  outside its OVERLOAD window the Magnet now takes damage from the hook
+  BLAST ONLY. Closed the two other bypasses: (1) mines dragged into its core
+  pop HARMLESSLY on the armored hull (clank; they still chunk 3x during
+  overload) — the old "mines are its weakness" design is retired; (2) the
+  hook's GRAB chip no longer bypasses (`hurtBoss` without the bypass flag —
+  it clanks while armored; `hookBossImpact`'s detonation keeps the bypass).
+  Bot AI updated: minelayer bots now ALSO bait the overload instead of
+  feeding mines into armor (their hook stays the anytime contribution); the
+  Arena field guide's Magnet entry rewritten (hook detonation is the only
+  armor-piercer). Gated by arena-level-test.js (armored mine = no damage,
+  overloaded mine = damage, grab chip clanks, blast still bypasses) — 5/5
+  stability + full regression green.
 - **2026-07-10** — Weapon-select grid is a 2x2 SQUARE (user): `#weapon-grid`
   flex-wrap (3+1) → CSS grid `repeat(2, 1fr)`, cards centered per cell.
   Desktop + mobile screenshots green.

@@ -89,6 +89,14 @@ protecting your own).
     `startingXP = f(...)` HARD-CAPPED (~L5-8 of 30) so it softens the early
     grind, never buys dominance (P2W guardrail: never sell power). Respawn
     screen with run stats (level, kills, best parts, survival time).
+17b. **CLASS UNLOCKS VIA LIFETIME XP (user)** — the starting-class picker
+    begins with only CANNON unlocked; the other classes (shotgun / minelayer /
+    ram) unlock by earning XP across runs (locked cards show their unlock
+    threshold). IMPORTANT: this gates the SPAWN pick only — picking up any
+    weapon off the ground mid-run stays fully allowed. Pairs with item 17's
+    persistent lifetime-XP profile (same localStorage → account blob). Decide:
+    unlock order + XP thresholds per class, and whether the loot-only railgun
+    stays outside the picker entirely (currently yes).
 18. **AUTOMATIC REVIVE (user)** — e.g. the death menu auto-respawns after a
     countdown (spectate/menu still selectable). Scope TBD with user.
 19. **Monetization hooks** — rewarded ad → starting-XP head-start; optional ad
