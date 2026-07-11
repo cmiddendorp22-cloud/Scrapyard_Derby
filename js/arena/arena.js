@@ -44,7 +44,7 @@ const HOOK_MAX_LEN = 375;        // reach / leash length — SAME at every tier 
 // hook extend speed scales slightly with the minelayer tier (user): slow at low
 // tiers, faster at high — but a small range (barely changes bottom→top)
 const HOOK_SPEED = 1270;         // extend speed — SAME at every tier (the old uncommon value, user)
-const MINE_BASE = 135;           // player mine base damage (× the 0.75→1.5 tier mult)
+const MINE_BASE = 67.5;          // mine base damage (halved with all weapons, user) (× the 0.75→1.5 tier mult)
 const HOOK_CD = 6;               // seconds between hooks (at reload 0)
 const HOOK_CD_MIN = 4;           // hook cooldown at MAX reload (linear between)
 const HOOK_REEL_TIME = 1.2;      // reel a grabbed car/self in over this long (slower pull, user)
@@ -52,7 +52,7 @@ const HOOK_STUN_AFTER = 0.5;     // a hooked car stays stunned (can't shoot) thi
 const HOOK_DAMAGE = 15;          // small chip on the grab (user: pulled + small damage)
 const HOOK_HEAD_R = 12;          // grab radius of the hook head
 // -- RAILGUN (loot-only sniper, user): fire a PIERCING slug, then a long reload --
-const RAIL_DMG = 97.5;           // slug damage before tier scaling (user: halved from 195)
+const RAIL_DMG = 48.75;          // slug damage before tier scaling (halved again with all weapons, user)
 const RAIL_SPEED = 2200;         // slug speed (user: a lot quicker — near-hitscan feel)
 const RAIL_LIFE = 1.0;           // slug lifetime (~2200px reach)
 const RAIL_CD = 2.2;             // reload between shots (shortened by RELOAD; no charge-up — user)
@@ -276,7 +276,7 @@ class ArenaGame {
     // HEALTH stat + ARMOR part → max HP; ARMOR alone → damage cut (the
     // DURABILITY stat was removed — per-tier value doubled to compensate)
     const at = L.armor ? L.armor.tier + 1 : 0;
-    this.maxHp = 100 + this.stats.health * 25 + 20 * at;
+    this.maxHp = 100 + this.stats.health * 12.5 + 20 * at; // HEALTH halved to +12.5/pt (user)
     this.partDmgReduce = 0.10 * at;
     this.hp = Math.min(this.hp, this.maxHp);
   }
@@ -425,10 +425,11 @@ class ArenaGame {
       const aimAng = this.playerAimAngle(); // mouse-aim within the forward cone
       const af = { x: Math.cos(aimAng), y: Math.sin(aimAng) };
       if (w.type === "cannon") {
-        w.cd = 0.3 / rate;
+        const S = WEAPON_STATS.cannon; // SHARED table — bots fire the identical gun
+        w.cd = S.interval / rate;
         const bx = p.x + f.x * (p.length / 2 + 6), by = p.y + f.y * (p.length / 2 + 6); // from the front of the car
-        const b = new Bullet(bx, by, aimAng, 560, true, 26 * dmul);
-        b.life = 2.5;       // longer range for the big map
+        const b = new Bullet(bx, by, aimAng, S.speed, true, S.dmg * dmul);
+        b.life = S.life;    // longer range for the big map
         b.shooter = p;      // kill attribution
         this.bullets.push(b);
         this.particles.sparks(bx, by, aimAng, 3, 140);
@@ -438,14 +439,14 @@ class ArenaGame {
         // close-range pellet spread: several short-lived pellets in a cone.
         // Big damage if most connect up close, harmless at range (pellets die
         // fast + fan out). Heavy recoil, slower cooldown than the cannon.
-        w.cd = 0.75 / rate;
-        const pellets = 6, spread = 0.20;
+        const S = WEAPON_STATS.shotgun; // SHARED table
+        w.cd = S.interval / rate;
         const bx = p.x + f.x * (p.length / 2 + 6), by = p.y + f.y * (p.length / 2 + 6);
-        for (let i = 0; i < pellets; i++) {
-          const ang = aimAng + (i / (pellets - 1) - 0.5) * 2 * spread; // spread centered on the aim
-          const b = new Bullet(bx, by, ang, 620, true, 22.5 * dmul); // 2.5x (user) — point-blank volleys hit HARD
-          b.life = 0.34; b.radius = 3; // short reach
-          b.strength = 0.35; // weak pellets: one normal cannon bullet (str 1) breaks ~3 of them
+        for (let i = 0; i < S.pellets; i++) {
+          const ang = aimAng + (i / (S.pellets - 1) - 0.5) * 2 * S.spread; // spread centered on the aim
+          const b = new Bullet(bx, by, ang, S.speed, true, S.dmg * dmul);
+          b.life = S.life; b.radius = 3; // short reach
+          b.strength = S.strength; // weak pellets: one normal cannon bullet (str 1) breaks ~3 of them
           b.shooter = p;
           this.bullets.push(b);
         }
@@ -453,7 +454,7 @@ class ArenaGame {
         p.vx -= af.x * 55; p.vy -= af.y * 55; // heavy kick opposite the shot
         this.audio.playShoot();
       } else if (w.type === "minelayer") {
-        w.cd = 1.0 / rate;
+        w.cd = WEAPON_STATS.minelayer.interval / rate;
         const mx = p.x - f.x * (p.length / 2 + 4), my = p.y - f.y * (p.length / 2 + 4);
         this.mines.push({ x: mx, y: my, owner: this.player, arm: 1.0, age: 0, dmg: this.mineDamageOf(this.player), dead: false });
         if (this.mines.length > 25) this.mines.shift();
@@ -511,11 +512,11 @@ class ArenaGame {
     this.railCd = RAIL_CD / (1 + this.stats.reload * 0.08); // RELOAD shortens it
   }
 
-  // shared player/bot railgun shot. Damage = RAIL_DMG x tier; the slug carries
-  // a STRENGTH budget it spends piercing things (see updateProjectiles).
+  // shared player/bot railgun shot. Damage = RAIL_DMG x tier — the EXACT same
+  // number for players and bots (parity, user); the slug carries a STRENGTH
+  // budget it spends piercing things (see updateProjectiles).
   fireRailgun(owner, angle, tier) {
-    const dmg = RAIL_DMG * (1 + 0.12 * ((tier || 0) + 1)) *
-      (owner === this.player ? 1 : 1 + (owner.level || 1) * 0.01); // bots: tiny level scale
+    const dmg = RAIL_DMG * (1 + 0.12 * ((tier || 0) + 1));
     const b = new Bullet(owner.x + Math.cos(angle) * (owner.length / 2 + 8),
       owner.y + Math.sin(angle) * (owner.length / 2 + 8), angle, RAIL_SPEED, owner === this.player, dmg);
     b.life = RAIL_LIFE;
@@ -641,11 +642,9 @@ class ArenaGame {
 
   // THE single source of truth for a car's mine damage — the mines they DROP and
   // the hook's detonation both read this. Scales 0.75→1.5 with the minelayer
-  // tier (user); bots also scale with level.
+  // tier. PARITY (user): bots use the exact player formula (no level scaling).
   mineDamageOf(owner) {
-    const mul = this.mineTierMul(this.minelayerTierOf(owner));
-    if (owner === this.player) return MINE_BASE * mul;
-    return (36 + 3 * (owner.level || 1)) * mul; // +50% (was 24 + 2*level)
+    return MINE_BASE * this.mineTierMul(this.minelayerTierOf(owner));
   }
 
   // hook extend speed — flat, the SAME at every tier (user); only mine/hook

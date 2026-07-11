@@ -21,6 +21,11 @@ protecting your own).
   "easier; might change it back") — `weapon2` stays dormant in code.
 - **Stats:** health / speed / reload / regen (durability was removed; ARMOR
   covers damage reduction). 1 point per level, cap 10 each.
+- **PLAYER/BOT PARITY (user, 2026-07-10):** bots use the player's EXACT
+  weapon table (`WEAPON_STATS`), stat formulas, HP formula, base car, and
+  regen. A level-N bot spawns with N-1 randomly-spent stat points. Their
+  personas (aim scatter, reaction delay, hook sloppiness) are the only
+  handicap. Keep parity when adding weapons/stats.
 - **Weapons:** cannon, shotgun, minelayer (mines + right-click HOOK), ram
   (hold-to-charge boost), and the LOOT-ONLY railgun (no charge — a piercing
   full-damage slug on FIRE with a long reload; found in crates/boss drops).

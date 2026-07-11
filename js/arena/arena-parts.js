@@ -21,6 +21,18 @@ const ARENA_TIERS = [
 const TIER_MAX = ARENA_TIERS.length - 1; // 4 = legendary
 
 const PART_SLOTS = ["tires", "engine", "weapon", "armor"];
+
+// THE shared weapon table (user: full player/bot parity) — damage, fire
+// intervals, projectile speeds. Player `updateWeapon` AND bot fire code both
+// read THIS; tier scaling is applied identically on top (damage x
+// (1 + 0.12·(tier+1)), fire rate x (1 + 0.10·(tier+1)) x reload stat).
+// Mines/hook damage live in `mineDamageOf` (also shared); railgun damage in
+// RAIL_DMG (shared via fireRailgun).
+const WEAPON_STATS = {
+  cannon:    { dmg: 13, interval: 0.3, speed: 560, life: 2.5 },
+  shotgun:   { dmg: 11.25, interval: 0.75, speed: 620, life: 0.34, pellets: 6, spread: 0.20, strength: 0.35 },
+  minelayer: { interval: 1.0 },
+};
 // all weapon types that can exist as PARTS (loot/equip/drops). The RAILGUN is
 // LOOT-ONLY (user): never on the weapon-select screen or the bot spawn pool —
 // found in crates (small chance) and central-boss drops.

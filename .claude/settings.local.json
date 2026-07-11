@@ -145,7 +145,8 @@
       "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-panel-wsel.png\" 1280 720 600)",
       "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&dead\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-panel-death.png\" 1280 720 900)",
       "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-wsel-2x2.png\" 1280 720 600)",
-      "Bash(node tools/shot.js \"http://localhost:8080/?touch=1&mode=arena\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-wsel-2x2-mob.png\" 844 390 700)"
+      "Bash(node tools/shot.js \"http://localhost:8080/?touch=1&mode=arena\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-wsel-2x2-mob.png\" 844 390 700)",
+      "Bash(node tools/shot.js \"http://localhost:8080/?mode=arena&weapon=cannon&guide\" \"C:/Users/cmidd/AppData/Local/Temp/claude/c--Users-cmidd-Scrapyard-Derby/728c5074-1d16-4b10-b96f-0471dfaf8857/scratchpad/shot-guide-fix.png\" 1280 720 700)"
     ]
   }
 }

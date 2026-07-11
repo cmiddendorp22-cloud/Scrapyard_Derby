@@ -36,7 +36,7 @@ const BOT_ORBIT_RANGE = 250;  // ranged bots circle-strafe the target at this di
 const BOT_LOOT_RANGE = 600;   // notices ground-part UPGRADES within this range
 const BOT_LOOT_CHANNEL = 2;   // seconds a bot must sit over a part to claim it
 const BOT_LOOT_CONTEST = 200; // won't seek a drop if any OTHER car is this close to it
-const BOT_BASE = { accel: 600, maxSpeed: 355 };
+// (bots use ARENA_BASE — the player's exact base car — since the parity pass)
 
 // -- shot-leading support (ported from the Gauntlet gunner's proven model) --
 
@@ -259,12 +259,14 @@ function tickWheelRepair(car, dt, delay = WHEEL_REPAIR_DELAY) {
 
 class ArenaBot extends Car {
   constructor(x, y, weapon, level, name) {
-    super(x, y, rand(0, TAU), { accel: BOT_BASE.accel, maxSpeed: BOT_BASE.maxSpeed, turnRate: 2.5, grip: 7, drag: 0.6 });
+    // same base car as the player (parity, user) — ARENA_BASE lives in arena.js
+    super(x, y, rand(0, TAU), { accel: ARENA_BASE.accel, maxSpeed: ARENA_BASE.maxSpeed, turnRate: 2.9, grip: 7, drag: 0.6 });
     this.weapon = weapon;
     this.level = level;
     this.xp = 0;
     this.statPoints = 0;                 // spent instantly (randomly) on level-up
-    this.stats = { health: 0, speed: 0, reload: 0 }; // (durability removed — armor part covers it)
+    this.stats = { health: 0, speed: 0, reload: 0, regen: 0 }; // the player's full stat set (parity)
+    this.outOfCombat = REGEN_DELAY;      // spawn "out of combat" (regen gate, same as the player)
     // name is assigned without-replacement by ArenaGame.spawnBot (no two living
     // bots share); the pick() fallback is for direct construction (tests)
     this.name = name || pick(BOT_NAMES);
@@ -335,8 +337,18 @@ class ArenaBot extends Car {
       weapon: makePart("weapon", weapon, tierForLevel(level)),
       armor: makePart("armor", "armor", tierForLevel(level)),
     };
+    // PARITY (user): a bot gets the stat points a player of its level would
+    // have (1 per level past 1), spent randomly — its level now matters only
+    // through these points + its gear, exactly like the player.
+    for (let i = 1; i < this.level; i++) this.spendRandomStat();
     this.applyStats();
     this.hp = this.maxHp; // full HP including the armor part's bonus
+  }
+
+  // spend one banked point on a RANDOM uncapped stat (spawn levels + level-ups)
+  spendRandomStat() {
+    const opts = Object.keys(this.stats).filter((k) => this.stats[k] < 10);
+    if (opts.length) this.stats[pick(opts)]++;
   }
 
   // gain XP → level up → spend the point on a RANDOM stat (user request)
@@ -345,26 +357,27 @@ class ArenaBot extends Car {
     while (this.xp >= arenaXpToNext(this.level)) {
       this.xp -= arenaXpToNext(this.level);
       this.level++;
-      const opts = Object.keys(this.stats).filter((k) => this.stats[k] < 10);
-      if (opts.length) this.stats[pick(opts)]++;
+      this.spendRandomStat();
       this.applyStats(true); // heal by the HP the level gained
     }
   }
 
-  // derive tuning from level + stats + equipped PARTS (gear buffs the bot too)
+  // derive tuning from stats + equipped PARTS — the EXACT player formulas
+  // (parity, user): same base car, same per-point stat effects, same part
+  // effects. Level only matters through stat points + gear, like the player.
   applyStats(healOnGain) {
     const L = this.loadout || {};
     const spd = 1 + this.stats.speed * 0.05;
     const eng = L.engine ? 1 + 0.05 * (L.engine.tier + 1) : 1; // engine part → speed/accel
-    this.maxSpeed = BOT_BASE.maxSpeed * spd * eng;
-    this.engineAccel = BOT_BASE.accel * spd * eng;
+    this.maxSpeed = ARENA_BASE.maxSpeed * spd * eng;
+    this.engineAccel = ARENA_BASE.accel * spd * eng;
     const tt = L.tires ? L.tires.tier + 1 : 0;                 // tires part → grip/turn/handbrake
     this.grip = 7 + 1.0 * tt;
-    this.turnRate = 2.5 + 0.08 * tt;
+    this.turnRate = 2.9 + 0.08 * tt;
     this.handbrakeBoost = 1.3 + 0.10 * tt;                     // sharper drift per tier (base 1.3)
     setupWheels(this, L.tires ? L.tires.tier : 0);             // left/right wheel pools (dismemberment)
     const at = L.armor ? L.armor.tier + 1 : 0;                 // armor part → HP + reduction
-    const newMax = 80 + this.level * 20 + this.stats.health * 25 + 20 * at;
+    const newMax = 100 + this.stats.health * 12.5 + 20 * at;   // the player's HP formula (HEALTH +12.5/pt)
     const inc = newMax - (this.maxHp || newMax);
     this.maxHp = newMax;
     this.partDmgReduce = 0.10 * at; // ARMOR part alone (durability stat removed)
@@ -500,7 +513,14 @@ class ArenaBot extends Car {
 
   update(dt, game) {
     if (this.stunT > 0) this.stunT -= dt; // hooked → stunned (can't shoot), ticks down after the reel
-    tickWheelRepair(this, dt);            // wheels mend after 10s without a hit
+    // REGEN parity (user): bots heal out of combat exactly like the player —
+    // REGEN_BASE +0.5%/point after REGEN_DELAY without a hit (hurt() resets),
+    // and the REGEN stat trims the wheel-mend gate the same 0.5s/point
+    this.outOfCombat = (this.outOfCombat || 0) + dt;
+    if (this.hp < this.maxHp && this.outOfCombat >= REGEN_DELAY) {
+      this.hp = Math.min(this.maxHp, this.hp + this.maxHp * (REGEN_BASE + this.stats.regen * 0.005) * dt);
+    }
+    tickWheelRepair(this, dt, WHEEL_REPAIR_DELAY - 0.5 * this.stats.regen);
     // attack-gate tracking (user): how long I've been CONTINUOUSLY visible on
     // the player's screen (logical 1280x720 rect). Off-screen resets it, so
     // every re-entry pays the reaction delay again.
@@ -778,9 +798,11 @@ class ArenaBot extends Car {
             if (this.weapon === "cannon" && bd > 60 && bd < 420 && this.fireTimer <= 0) {
               const pa = angleDiff(Math.atan2(best.y - this.y, best.x - this.x), this.heading);
               if (Math.abs(pa) < 0.35) {
-                this.fireTimer = 0.85 / this.reloadMul();
+                this.fireTimer = 0.85 / this.reloadMul(); // lazy farm cadence (not the combat interval)
                 const fb = new Bullet(this.x + Math.cos(this.heading) * 24, this.y + Math.sin(this.heading) * 24,
-                  Math.atan2(best.y - this.y, best.x - this.x), 460, false, (10 + this.level) * this.weaponMul());
+                  Math.atan2(best.y - this.y, best.x - this.x), WEAPON_STATS.cannon.speed, false,
+                  WEAPON_STATS.cannon.dmg * this.weaponMul()); // the player's exact cannon round (parity)
+                fb.life = WEAPON_STATS.cannon.life;
                 fb.shooter = this;
                 game.bullets.push(fb);
               }
@@ -836,11 +858,18 @@ class ArenaBot extends Car {
       // distance sets flight time, along-track accel + typical-speed regression
       // set the travel. persona.lead scales it (under/over-leaders) and every
       // shot carries the personal aim scatter.
-      const ap = arenaAimPoint(this, target, 460, this.persona.lead);
+      // PARITY (user): bots fire the PLAYER'S exact weapons — damage/interval/
+      // speed from the shared WEAPON_STATS table, same tier scaling. Their
+      // personas (scatter, reaction, hook sloppiness) are the only handicap.
+      const wtier = (this.loadout.weapon ? this.loadout.weapon.tier : 0) + 1;
+      const wrate = this.reloadMul() * (1 + 0.10 * wtier);
+      const ap = arenaAimPoint(this, target, WEAPON_STATS.cannon.speed, this.persona.lead);
       const ang = Math.atan2(ap.y - this.y, ap.x - this.x) + rand(-this.persona.aimErr, this.persona.aimErr);
       if (this.weapon === "cannon") {
-        this.fireTimer = 0.7 / this.reloadMul();
-        const b = new Bullet(this.x + Math.cos(ang) * 24, this.y + Math.sin(ang) * 24, ang, 460, false, (10 + this.level) * this.weaponMul());
+        const S = WEAPON_STATS.cannon;
+        this.fireTimer = S.interval / wrate;
+        const b = new Bullet(this.x + Math.cos(ang) * 24, this.y + Math.sin(ang) * 24, ang, S.speed, false, S.dmg * this.weaponMul());
+        b.life = S.life;
         b.shooter = this; // kill attribution
         game.bullets.push(b);
         game.audio.playEnemyShoot();
@@ -848,25 +877,25 @@ class ArenaBot extends Car {
         // close-range pellet spread — only fire when actually close (this is a
         // short-reach weapon); otherwise hold and keep closing the distance
         if (td < 340) {
-          this.fireTimer = 0.9 / this.reloadMul();
-          const pellets = 6, spread = 0.20;
-          for (let i = 0; i < pellets; i++) {
-            const pang = ang + (i / (pellets - 1) - 0.5) * 2 * spread;
-            const pb = new Bullet(this.x + Math.cos(pang) * 24, this.y + Math.sin(pang) * 24, pang, 620, false, (17.5 + 2.5 * this.level) * this.weaponMul()); // 2.5x (user)
-            pb.life = 0.34; pb.radius = 3;
-            pb.strength = 0.35; // weak pellets — a normal cannon bullet breaks ~3
+          const S = WEAPON_STATS.shotgun;
+          this.fireTimer = S.interval / wrate;
+          for (let i = 0; i < S.pellets; i++) {
+            const pang = ang + (i / (S.pellets - 1) - 0.5) * 2 * S.spread;
+            const pb = new Bullet(this.x + Math.cos(pang) * 24, this.y + Math.sin(pang) * 24, pang, S.speed, false, S.dmg * this.weaponMul());
+            pb.life = S.life; pb.radius = 3;
+            pb.strength = S.strength; // weak pellets — a normal cannon bullet breaks ~3
             pb.shooter = this;
             game.bullets.push(pb);
           }
           game.audio.playEnemyShoot();
         } else this.fireTimer = 0.12; // re-check soon, don't waste the volley at range
       } else if (this.weapon === "minelayer") {
-        this.fireTimer = 1.6 / this.reloadMul();
+        this.fireTimer = WEAPON_STATS.minelayer.interval / wrate;
         const f = this.forward;
         game.mines.push({ x: this.x - f.x * 26, y: this.y - f.y * 26, owner: this, arm: 1.0, age: 0, dmg: game.mineDamageOf(this), dead: false });
       } else if (this.weapon === "railgun") {
-        // looted sniper: a single led slug when lined up, then a long reload
-        this.fireTimer = 2.6 / this.reloadMul();
+        // looted sniper: a single led slug when lined up, then the player's reload
+        this.fireTimer = RAIL_CD / (1 + this.stats.reload * 0.08);
         const rp = arenaAimPoint(this, target, RAIL_SPEED, this.persona.lead);
         const rang = Math.atan2(rp.y - this.y, rp.x - this.x) + rand(-this.persona.aimErr, this.persona.aimErr);
         game.fireRailgun(this, rang, this.loadout.weapon.tier);
@@ -931,7 +960,7 @@ class ArenaBot extends Car {
     const dealt = amount / (1 + (this.partDmgReduce || 0)); // ARMOR part reduction
     this.hp -= dealt;
     chipWheels(this, dealt, hitX, hitY, srcType); // bullets chew the closest wheel, blasts the closest two
-    if (amount > 0) this.sinceHit = 0;    // any real hit stalls the wheel mend
+    if (amount > 0) { this.sinceHit = 0; this.outOfCombat = 0; } // any real hit stalls the wheel mend + regen
     this.hitFlash = 0.12;
     // remember the attacker (hurtCar sets lastHitBy just before calling us) —
     // retaliation: they jump the targeting queue for a few seconds

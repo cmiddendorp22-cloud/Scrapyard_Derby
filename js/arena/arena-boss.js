@@ -103,7 +103,7 @@ class ArenaBoss {
       // still dodgeable by turning.
       this.fireTimer -= dt;
       if (target && bd < 820 && this.fireTimer <= 0 && !this.plates[0].dead) {
-        this.fireTimer = 0.7; // faster cannon (user: more firerate; was 1.0)
+        this.fireTimer = 0.233; // 3x faster shells (user; was 0.7)
         const bap = arenaAimPoint(this, target, 300, 0.5);
         const ang = Math.atan2(bap.y - this.y, bap.x - this.x);
         const b = new Bullet(this.x + Math.cos(ang) * this.radius, this.y + Math.sin(ang) * this.radius, ang, 300, false, 26);

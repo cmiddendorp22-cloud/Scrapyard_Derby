@@ -263,8 +263,10 @@ body.touch-mode:has(.overlay:not(.hidden)) #touch-controls { display: none; }
   max-width: min(760px, 94vw);
   max-height: 94vh;
   overflow-y: auto;
+  overflow-x: hidden; /* wide children (guide grids) shrink instead of scrolling sideways */
   box-shadow: 0 12px 44px rgba(0, 0, 0, 0.55);
 }
+.menu-panel > * { max-width: 100%; } /* nothing inside may exceed the panel */
 .overlay .menu-panel h1 { font-size: 34px; }   /* the panel is the frame — calmer title */
 .overlay .menu-panel button { margin-top: 10px; font-size: 17px; padding: 11px 30px; }
 /* buttons INSIDE rows keep their compact pill sizing (ID-scoped ones override further) */

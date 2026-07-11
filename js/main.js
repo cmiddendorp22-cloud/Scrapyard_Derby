@@ -248,7 +248,7 @@
     }
     // PART SLOTS + TIERS
     section("PART SLOTS");
-    row(null, "5 SLOTS", "Tires (grip / turn / handbrake), Engine (speed + accel), two Weapon slots (both fire together), Armor (max HP + damage reduction). Loot better parts off wrecks to fill and upgrade each slot.");
+    row(null, "4 SLOTS", "Tires (grip / turn / handbrake), Engine (speed + accel), one Weapon slot, Armor (max HP + damage reduction). Loot better parts off wrecks and crates to fill and upgrade each slot.");
     const tierWrap = document.createElement("div"); tierWrap.className = "ag-tiers";
     for (const t of ARENA_TIERS) {
       const c = document.createElement("span"); c.className = "ag-tier"; c.style.background = t.color; c.textContent = t.name;
@@ -332,7 +332,7 @@
     const lvl = arena.stats[stat];
     if (lvl >= 10) return STAT_LABELS[stat] + " is MAXED (10)";
     const to = lvl + 1;
-    if (stat === "health") return "HEALTH " + lvl + " → " + to + ":  +25 max HP  (" + Math.round(arena.maxHp) + " → " + Math.round(arena.maxHp + 25) + ")";
+    if (stat === "health") return "HEALTH " + lvl + " → " + to + ":  +12.5 max HP  (" + Math.round(arena.maxHp) + " → " + Math.round(arena.maxHp + 12.5) + ")";
     if (stat === "speed") return "SPEED " + lvl + " → " + to + ":  +5% top speed & accel  (+" + (lvl * 5) + "% → +" + (to * 5) + "%)";
     if (stat === "reload") {
       let txt = "RELOAD " + lvl + " → " + to + ":  +8% fire rate  (+" + (lvl * 8) + "% → +" + (to * 8) + "%)";

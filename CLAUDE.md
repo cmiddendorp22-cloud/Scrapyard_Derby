@@ -493,6 +493,44 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-10** — GLOBAL damage/health halving + guide fixes (user).
+  (1) HEALTH stat halved: +25 → +12.5 maxHp per point (player AND bots — one
+  formula each, tooltip updated). (2) ALL weapon damage halved for everyone
+  (parity table = one change covers both): cannon 26 → 13, shotgun pellet
+  22.5 → 11.25, `MINE_BASE` 135 → 67.5 (hook blast follows automatically),
+  `RAIL_DMG` 97.5 → 48.75. Hook grab chip (15) + boss attacks untouched.
+  Net effect: fights last longer relative to the parity-buffed fire rates.
+  (3) Field guide: killed the horizontal scrollbar (`.menu-panel` gets
+  `overflow-x: hidden` + a `> * { max-width: 100% }` guard — the 700px
+  arena-guide grid exceeded the 760px panel minus padding) and fixed stale
+  copy ("two Weapon slots" → the single-slot reality, wrecks AND crates).
+  Tests updated to the constants (not literals) where possible.
+- **2026-07-10** — Junk Titan shells 3x faster (user): heavy-cannon interval
+  0.7s → 0.233s (still gated on the FRONT plate surviving + 820px range; the
+  shells remain slow/dodgeable strength-3 rounds — it's a barrage now).
+- **2026-07-10** — FULL PLAYER/BOT PARITY (user Q&A: full weapon parity +
+  exact player stat formulas + bot regen). WEAPONS: a shared `WEAPON_STATS`
+  table (arena-parts.js) now feeds BOTH the player's `updateWeapon` and the
+  bot fire code — identical damage, fire intervals (bot cannon 0.7s → 0.3s!),
+  bullet speeds/life, tier scaling (damage x1+0.12t, rate x1+0.10t x reload);
+  bot farm-shots use the same cannon round; `mineDamageOf` lost its bot-level
+  term (everyone = MINE_BASE x tier); `fireRailgun` lost the bot +1%/level;
+  bot railgun reload = the player's RAIL_CD/reload formula. CHASSIS/STATS:
+  bots now use `ARENA_BASE` (was a slower BOT_BASE), turnRate 2.9, and the
+  player's EXACT maxHp formula `100 + 25·health + 20·armorTier` — the old
+  `80 + 20·level` is GONE; instead a level-N bot spawns with N-1 stat points
+  spent randomly (`spendRandomStat`), so level matters only through points +
+  gear, like the player. REGEN: bots carry the full stat set incl. REGEN —
+  same 2%/s base +0.5%/pt after 5s without a hit (`outOfCombat`, reset in
+  `hurt`), and REGEN trims their wheel-mend gate 0.5s/pt too. Bots are
+  markedly deadlier now (3x cannon fire rate, real mines at low level) —
+  their personas (aim scatter, reaction delay, hookErr) are the only
+  handicap; all combat dials now live in ONE table. Test fallout fixed
+  (duel/spectate tests isolate with unkillable pins — parity guns wreck bots
+  mid-test otherwise; L1-bot-vs-player car compare pins common gear). Gated
+  by a new parity section (shared cannon round dmg/speed/life/interval, no
+  mine level term, player HP formula, N-1 spawn points, bot regen + hit
+  reset, base-car equality) — 10/10 stability + full regression green.
 - **2026-07-10** — Magnet armor HARDENED (user bug report + rule change):
   outside its OVERLOAD window the Magnet now takes damage from the hook
   BLAST ONLY. Closed the two other bypasses: (1) mines dragged into its core
