@@ -539,6 +539,26 @@ cascade bug that text-only testing never would.
   run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
   input, and RENDER server snapshots (stop local simming); then M2 interpolation.
   The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-07-11** — MULTIPLAYER M2 (client smoothing): INTERPOLATION so the
+  ~20Hz server snapshots render as smooth 60fps motion. `NetClient` now keeps a
+  small ring BUFFER of recent snapshots (`_buf`, last 12, with client-clock
+  arrival times + `lastSnapAt`); `interpPositions(rt)` finds the two snapshots
+  bracketing render time `rt` and lerps every car + the boss (position + a
+  shortest-path angle lerp). `applyOnlineSnapshot` renders REMOTE cars + the
+  boss at `rt = now - 100ms` (INTERP_DELAY) = interpolated in the recent past;
+  the LOCAL car instead eases toward the latest authoritative position
+  (`SELF_SMOOTH` 0.35 exponential, hard-snaps on respawn/teleport > 220px) so
+  your own driving keeps ~zero added lag; bullets extrapolate straight-line
+  along their velocity to the same `rt` so shots stay visually consistent with
+  the cars that fired them. Static entities (mines/scrap/crates/drops) + self
+  HUD stats stay on the latest snapshot. No server or protocol change — pure
+  client render smoothing. Gated by interp-test.js (midpoint lerp, short-path
+  angle wrap across pi, clamp before-oldest/after-newest, newly-appeared car
+  uses latest, null boss) + full 6-suite regression green; live screenshot
+  confirmed correct render (self drove to LVL 2, spend-points panel + boss bar
+  + bot + leaderboard all intact). NEXT (M3): true local INPUT PREDICTION +
+  server reconciliation (input seq numbers + replay) for zero-lag self motion
+  under real latency; online loot/loadout UI; reconnect/room-list polish.
 - **2026-07-11** — MULTIPLAYER M1: CLIENT ONLINE MODE (the browser plays the
   authoritative server's world; closes the M1 loop). `js/net.js` `NetClient`
   opens a WebSocket, JOINs a room (`{type:"join",room,name}`), streams local

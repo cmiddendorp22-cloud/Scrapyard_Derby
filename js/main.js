@@ -1075,16 +1075,31 @@
       hpFrac: () => b.hf, isVulnerable: () => !!b.vul,
       name: b.kind === "magnet" ? "THE MAGNET" : "JUNK TITAN", tagline: "" };
   }
+  const INTERP_DELAY = 100;   // ms behind live: render remote entities interpolated in the past
+  const SELF_SMOOTH = 0.35;   // self car eases toward the latest authoritative pos (no interp lag)
+  function lerpAngleM(a, b, f) { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * f; }
   function applyOnlineSnapshot() {
     const snap = net.snap; if (!snap) return;
+    const nowMs = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    const interp = net.interpPositions(nowMs - INTERP_DELAY);
     const cache = net._carCache, seen = new Set();
     const players = [], bots = [];
     let selfCar = null, selfWrap = null;
     for (const c of snap.cars) {
       seen.add(c.id);
       let car = cache.get(c.id);
+      const fresh = !car;
       if (!car) { car = new Car(c.x, c.y, c.h); cache.set(c.id, car); }
-      car.x = c.x; car.y = c.y; car.heading = c.h; car.hp = c.hp; car.maxHp = c.mhp;
+      const isSelf = c.k === "p" && c.id === net.selfId;
+      if (isSelf) {
+        // smooth toward latest (snap hard on respawn/teleport)
+        const dx = c.x - car.x, dy = c.y - car.y;
+        if (fresh || Math.hypot(dx, dy) > 220) { car.x = c.x; car.y = c.y; car.heading = c.h; }
+        else { car.x += dx * SELF_SMOOTH; car.y += dy * SELF_SMOOTH; car.heading = lerpAngleM(car.heading, c.h, SELF_SMOOTH); }
+      } else if (interp && interp.cars.has(c.id)) {
+        const p = interp.cars.get(c.id); car.x = p.x; car.y = p.y; car.heading = p.h;
+      } else { car.x = c.x; car.y = c.y; car.heading = c.h; }
+      car.hp = c.hp; car.maxHp = c.mhp;
       if (c.k === "p") {
         const isLocal = c.id === net.selfId;
         const wrap = { car, name: c.n, level: c.lv, hp: c.hp, maxHp: c.mhp, isLocal, dead: !!c.dead,
@@ -1108,13 +1123,18 @@
     arena.players = players;
     arena.bots = bots;
     if (selfWrap) arena.localPlayer = selfWrap;
-    arena.bullets = snap.bullets.map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, radius: b.rail ? 5 : 4, railgun: !!b.rail, shooter: b.sid ? selfCar : null }));
+    // bullets move straight, so extrapolate each along its velocity to the same
+    // render time as the interpolated cars (elapsed is ~negative = render in the
+    // recent past), keeping shots visually consistent with the cars that fired them
+    const elapsed = Math.max(-0.15, Math.min(0.02, (nowMs - INTERP_DELAY - net.lastSnapAt) / 1000));
+    arena.bullets = snap.bullets.map((b) => ({ x: b.x + b.vx * elapsed, y: b.y + b.vy * elapsed, vx: b.vx, vy: b.vy, radius: b.rail ? 5 : 4, railgun: !!b.rail, shooter: b.sid ? selfCar : null }));
     arena.mines = snap.mines.map((m) => ({ x: m.x, y: m.y, arm: m.arm ? 1 : 0, dead: false, hp: 3, age: 0, owner: null }));
     arena.scrap = snap.scrap.map((s) => makeNetScrap(s.x, s.y, s.a));
     arena.crates = snap.crates.map((c) => ({ x: c.x, y: c.y, r: 16, hp: 2, dead: false, seed: (c.x * 13 + c.y * 7) % 6.283 }));
     arena.drops = snap.drops.map((d) => ({ x: d.x, y: d.y, dead: false, age: 0, part: { slot: d.slot, type: d.type, tier: d.tier } }));
     arena.hooks = [];
     arena.boss = snap.boss ? makeNetBoss(snap.boss) : null;
+    if (arena.boss && interp && interp.boss) { arena.boss.x = interp.boss.x; arena.boss.y = interp.boss.y; arena.boss.heading = interp.boss.h; }
     const lb = snap.cars.map((c) => ({ car: cache.get(c.id), name: c.n, level: c.lv, xp: c.xp || 0, isPlayer: c.id === net.selfId, dead: !!c.dead }));
     lb.sort((a, b) => (b.level - a.level) || (b.xp - a.xp));
     arena.leaderboard = lb;
