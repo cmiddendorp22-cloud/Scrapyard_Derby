@@ -1,0 +1,9 @@
+# keep the image lean + never ship local build artifacts / secrets
+.git
+.gitignore
+node_modules
+server/node_modules
+**/*.log
+tmp
+.DS_Store
+*.md

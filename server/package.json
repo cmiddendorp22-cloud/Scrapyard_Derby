@@ -1,0 +1,13 @@
+{
+  "name": "scrapyard-derby-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Authoritative multiplayer game server for Scrapyard Arena (runs the SAME sim the browser does, headless). Lives in its own folder so the static client root stays dependency-free for Netlify.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

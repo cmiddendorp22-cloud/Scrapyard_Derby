@@ -126,8 +126,26 @@ protecting your own).
 
 ### Big lifts (deferred)
 
-26. **Real multiplayer / netcode** — authoritative server, humans + bot
-    backfill. Biggest lift.
+26. **Real multiplayer / netcode** — ⏳ IN PROGRESS (started 2026-07-11).
+    Decisions: friends-first ROOMS (design for a public server later), Node +
+    the `ws` library server-side (client stays dep-free), SERVER-AUTHORITATIVE
+    (server runs the sim, clients send inputs + render snapshots, bots
+    backfill). Milestones: **M0** offline N-player refactor ✅ DONE — the sim
+    carries N humans: player-state extracted to `ArenaPlayer`, per-human methods
+    take a `player` arg, `playerOf(car)` routes combat, the update loop sims the
+    world always + each player individually, the renderer draws every player
+    car; verified by a 2-player test. → **M1** networking POC — ⏳ SERVER DONE:
+    `server/` (Node + `ws`, isolated from the Netlify static client) runs the
+    same sim headless via `sim-host.js`, ticks 60Hz, broadcasts ~20Hz snapshots;
+    verified with Node ws clients incl. two seeing each other. LEFT: the browser
+    "online" mode (connect, stream input, render snapshots instead of local
+    simming). NOTE (Netlify): it can only host the static client — the sim
+    server needs a separate always-on Node host (Fly/Render/Railway/VPS); the
+    client points at `wss://…`. → **M2** client interpolation + input prediction →
+    **M3** bots-as-backfill, join/leave, full combat over the wire → **M4**
+    rooms/shareable link + hosting + the account-name hook. The headless sim
+    (tests run ArenaGame.update in Node), fixed timestep, deterministic RNG,
+    and player/bot parity are the enabling assets.
 27. **BOT-ONLY GAMEMODE (user queue, skipped for now).**
 28. **WEAK AUTOMATIC GUN (user queue, skipped for now).**
 29. **RAM BOOST BREAKS PILES (user queue, skipped for now).**

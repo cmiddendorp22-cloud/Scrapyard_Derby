@@ -87,6 +87,16 @@ class ArenaGame {
     this.started = false;
     this.paused = false;
     this.touchMode = false;
+    // MULTIPLAYER M0: the local human is a Player object; ArenaGame holds a list
+    // so more humans can join later. Back-compat accessors route this.hp /
+    // this.stats / this.player / ... to localPlayer, so existing code + tests
+    // are untouched while the state lives on the Player. (Created BEFORE the
+    // startWeapon assignment below, which now routes through the accessor.)
+    this.localPlayer = new ArenaPlayer();
+    this.localPlayer.isLocal = true;
+    this.localPlayer.input = input;
+    this.players = [this.localPlayer];
+    defineLocalPlayerAccessors(this);
     this.startWeapon = "cannon"; // chosen on the weapon-select screen before begin()
     // The player's display name on the leaderboard. Placeholder for now; when
     // Google accounts are linked (website), this becomes the account handle.
@@ -213,72 +223,72 @@ class ArenaGame {
 
   // -- leveling ---------------------------------------------------------------
 
-  xpToNext() { return arenaXpToNext(this.level); } // shared player/bot curve
+  xpToNext(player = this.localPlayer) { return arenaXpToNext(player.level); } // shared player/bot curve
 
-  addXp(amount) {
-    if (this.level >= LEVEL_CAP) return;
-    this.xp += amount;
-    while (this.level < LEVEL_CAP && this.xp >= this.xpToNext()) {
-      this.xp -= this.xpToNext();
-      this.levelUp();
+  addXp(amount, player = this.localPlayer) {
+    if (player.level >= LEVEL_CAP) return;
+    player.xp += amount;
+    while (player.level < LEVEL_CAP && player.xp >= arenaXpToNext(player.level)) {
+      player.xp -= arenaXpToNext(player.level);
+      this.levelUp(player);
     }
-    if (this.level >= LEVEL_CAP) this.xp = 0; // maxed — bar sits full
+    if (player.level >= LEVEL_CAP) player.xp = 0; // maxed — bar sits full
   }
 
   // absorbing scrap also heals the player: a FULL pile = SCRAP_HEAL_FRAC of
   // maxHp, pro-rata for a partial absorption (drive-over or shoot-to-harvest).
-  healFromScrap(drain, maxAmount) {
-    if (this.dead || this.hp <= 0 || this.hp >= this.maxHp || maxAmount <= 0) return;
-    const heal = this.maxHp * SCRAP_HEAL_FRAC * (drain / maxAmount);
-    this.hp = Math.min(this.maxHp, this.hp + heal);
+  healFromScrap(drain, maxAmount, player = this.localPlayer) {
+    if (player.dead || player.hp <= 0 || player.hp >= player.maxHp || maxAmount <= 0) return;
+    const heal = player.maxHp * SCRAP_HEAL_FRAC * (drain / maxAmount);
+    player.hp = Math.min(player.maxHp, player.hp + heal);
   }
 
-  levelUp() {
-    this.level++;
-    this.statPoints++;
-    const slot = SLOT_UNLOCKS[this.level];
-    if (slot && !this.slots[slot]) {
-      this.slots[slot] = true;
-      this.banner("ARMOR SLOT UNLOCKED", "loot one from a wreck");
-    } else {
-      this.banner("LEVEL " + this.level, "+1 stat point", "level"); // dedupes in the queue
+  levelUp(player = this.localPlayer) {
+    player.level++;
+    player.statPoints++;
+    const slot = SLOT_UNLOCKS[player.level];
+    if (slot && !player.slots[slot]) {
+      player.slots[slot] = true;
+      if (player.isLocal) this.banner("ARMOR SLOT UNLOCKED", "loot one from a wreck");
+    } else if (player.isLocal) {
+      this.banner("LEVEL " + player.level, "+1 stat point", "level"); // dedupes in the queue
     }
-    this.audio.playRoundClear();                       // rising level-up jingle
-    this.particles.sparks(this.player.x, this.player.y, fxRand(0, TAU), 22, 260); // gold burst
+    if (player.isLocal) this.audio.playRoundClear();   // rising level-up jingle (local feedback)
+    this.particles.sparks(player.car.x, player.car.y, fxRand(0, TAU), 22, 260); // gold burst (world FX)
   }
 
   // spend 1 banked point into a stat (non-blocking — called mid-drive)
-  spendStat(name) {
-    if (this.statPoints <= 0 || !(name in this.stats) || this.stats[name] >= STAT_CAP) return;
-    const frac = this.maxHp > 0 ? clamp(this.hp / this.maxHp, 0, 1) : 1; // HP% before the change
-    this.stats[name]++;
-    this.statPoints--;
-    this.applyStats();
-    this.hp = frac * this.maxHp; // upgrading HEALTH keeps the SAME HP% at the new max (user)
+  spendStat(name, player = this.localPlayer) {
+    if (player.statPoints <= 0 || !(name in player.stats) || player.stats[name] >= STAT_CAP) return;
+    const frac = player.maxHp > 0 ? clamp(player.hp / player.maxHp, 0, 1) : 1; // HP% before the change
+    player.stats[name]++;
+    player.statPoints--;
+    this.applyStats(player);
+    player.hp = frac * player.maxHp; // upgrading HEALTH keeps the SAME HP% at the new max (user)
   }
 
   // recompute derived values from stats (health/speed/reload/regen) +
   // equipped parts. Damage reduction comes from the ARMOR part alone.
-  applyStats() {
-    const L = this.loadout || {};
+  applyStats(player = this.localPlayer) {
+    const car = player.car, L = player.loadout || {};
     // SPEED stat + ENGINE part both scale top speed & accel
-    const spd = 1 + this.stats.speed * 0.05;
+    const spd = 1 + player.stats.speed * 0.05;
     const eng = L.engine ? 1 + 0.05 * (L.engine.tier + 1) : 1; // +5%/tier
-    this.player.maxSpeed = ARENA_BASE.maxSpeed * spd * eng;
-    this.player.engineAccel = ARENA_BASE.accel * spd * eng;
+    car.maxSpeed = ARENA_BASE.maxSpeed * spd * eng;
+    car.engineAccel = ARENA_BASE.accel * spd * eng;
     // TIRES part → grip + turn (better handling) + a sharper HANDBRAKE per tier
     // (better tires whip the nose around faster on a drift; base 1.3)
     const tt = L.tires ? L.tires.tier + 1 : 0;
-    this.player.grip = 7 + 1.0 * tt;
-    this.player.turnRate = 2.9 + 0.08 * tt;
-    this.player.handbrakeBoost = 1.3 + 0.10 * tt;
-    setupWheels(this.player, L.tires ? L.tires.tier : 0); // left/right wheel pools (dismemberment)
+    car.grip = 7 + 1.0 * tt;
+    car.turnRate = 2.9 + 0.08 * tt;
+    car.handbrakeBoost = 1.3 + 0.10 * tt;
+    setupWheels(car, L.tires ? L.tires.tier : 0); // left/right wheel pools (dismemberment)
     // HEALTH stat + ARMOR part → max HP; ARMOR alone → damage cut (the
     // DURABILITY stat was removed — per-tier value doubled to compensate)
     const at = L.armor ? L.armor.tier + 1 : 0;
-    this.maxHp = 100 + this.stats.health * 12.5 + 20 * at; // HEALTH halved to +12.5/pt (user)
-    this.partDmgReduce = 0.10 * at;
-    this.hp = Math.min(this.hp, this.maxHp);
+    player.maxHp = 100 + player.stats.health * 12.5 + 20 * at; // HEALTH halved to +12.5/pt (user)
+    player.partDmgReduce = 0.10 * at;
+    player.hp = Math.min(player.hp, player.maxHp);
   }
 
   // a fresh starting loadout: common tires/engine/armor + your picked weapon in
@@ -293,13 +303,13 @@ class ArenaGame {
     };
   }
 
-  hasRam() {
-    const L = this.loadout;
+  hasRam(player = this.localPlayer) {
+    const L = player.loadout;
     return !!(L && L.weapon1 && L.weapon1.type === "ram");
   }
 
-  hasRailgun() {
-    const L = this.loadout;
+  hasRailgun(player = this.localPlayer) {
+    const L = player.loadout;
     return !!(L && L.weapon1 && L.weapon1.type === "railgun");
   }
 
@@ -338,49 +348,49 @@ class ArenaGame {
     return null; // cannon / shotgun / railgun: FIRE-channel only
   }
 
-  // resolve the raw inputs into this frame's channels, given the loadout
-  resolvePlayerInputs() {
-    const inp = this.input;
-    const w = this.loadout && this.loadout.weapon1;
+  // resolve a player's raw inputs into this frame's channels, given the loadout
+  resolvePlayerInputs(player = this.localPlayer) {
+    const inp = player.input;
+    const w = player.loadout && player.loadout.weapon1;
     const ab = this.weaponAbility(w && w.type);
-    this._fireActive = inp.fire; // spammables: left-click / auto-fire / touch FIRE
+    player._fireActive = inp.fire; // spammables: left-click / auto-fire / touch FIRE
     // the ability channel: HOLD abilities read the left button (+ touch ability
     // button); CLICK abilities (hook) read the right button (+ touch button)
-    this._abilityHeld = ab
+    player._abilityHeld = ab
       ? (ab.hold ? (inp.mouseDown || inp.touchAbility1) : (inp.hookHeld || inp.touchAbility1))
       : false;
     // HUD layout-edit (hold H): clicks move panels, they don't fire
-    if (inp.layoutEdit) { this._fireActive = false; this._abilityHeld = false; }
+    if (inp.layoutEdit) { player._fireActive = false; player._abilityHeld = false; }
   }
 
   // RAM: HOLD left-click to CHARGE (dig in / wind up), release to LAUNCH a
   // boost scaled by hold time. Runs BEFORE integrate (sets the Car.boost the
   // physics reads).
-  updateRam(dt) {
-    this.resolvePlayerInputs();
-    const p = this.player;
-    const held = this.hasRam() ? this._abilityHeld : false;
-    if (!this.hasRam() || this.player.stunT > 0) { p.boost = 1; p.chargingRam = false; if (this.ramBoostT > 0) this.ramBoostT -= dt; return; }
-    if (this.ramBoostT > 0) {                 // mid-launch: strong boost, timed
-      this.ramBoostT -= dt;
-      p.boost = this.ramBoostT > 0 ? this.ramLaunchStr : 1;
+  updateRam(dt, player = this.localPlayer) {
+    this.resolvePlayerInputs(player);
+    const p = player.car;
+    const held = this.hasRam(player) ? player._abilityHeld : false;
+    if (!this.hasRam(player) || p.stunT > 0) { p.boost = 1; p.chargingRam = false; if (player.ramBoostT > 0) player.ramBoostT -= dt; return; }
+    if (player.ramBoostT > 0) {                // mid-launch: strong boost, timed
+      player.ramBoostT -= dt;
+      p.boost = player.ramBoostT > 0 ? player.ramLaunchStr : 1;
     } else if (held) {                         // holding: wind up + build charge
       // RELOAD speeds the wind-up (the ram's version of a faster fire rate)
-      this.ramCharge = Math.min(1, this.ramCharge + dt * (1 + this.stats.reload * 0.08) / 0.8); // ~0.8s to full at reload 0
+      player.ramCharge = Math.min(1, player.ramCharge + dt * (1 + player.stats.reload * 0.08) / 0.8); // ~0.8s to full at reload 0
       p.boost = 0.5;                           // dig in — slow while charging
-    } else if (this.ramCharge > 0.12) {        // released with charge → LAUNCH
-      this.ramLaunchStr = 1.6 + this.ramCharge * 1.0; // up to 2.6x
-      this.ramBoostT = 0.5 + this.ramCharge * 0.5;    // up to ~1.0s
-      this.ramCharge = 0;
-      p.boost = this.ramLaunchStr;
+    } else if (player.ramCharge > 0.12) {      // released with charge → LAUNCH
+      player.ramLaunchStr = 1.6 + player.ramCharge * 1.0; // up to 2.6x
+      player.ramBoostT = 0.5 + player.ramCharge * 0.5;    // up to ~1.0s
+      player.ramCharge = 0;
+      p.boost = player.ramLaunchStr;
       this.audio.playRev(); // rev on launch (same cue as the enemy rammer)
     } else {
-      this.ramCharge = 0;
+      player.ramCharge = 0;
       p.boost = 1;
     }
     // mirror "actively ramming" onto the player CAR (ramDamageMul/isChargingRam
     // read it): launched + moving. Single slot = the ram is always primary.
-    p.chargingRam = ramLaunchingFast(p, this.ramBoostT);
+    p.chargingRam = ramLaunchingFast(p, player.ramBoostT);
   }
 
   // Raw FULL-CIRCLE angle from the player to the mouse cursor (any direction),
@@ -403,26 +413,29 @@ class ArenaGame {
   // forward cone (`AIM_CONE`) — nudge off the nose but never backward — from the
   // FRONT of the car. Touch / no cursor → straight out the nose. (The HOOK does
   // NOT use this — it fires full-circle toward the cursor, see updatePlayerHook.)
-  playerAimAngle() {
-    const want = this.mouseWorldAngle();
-    if (want === null) return this.player.heading;
-    return this.player.heading + clamp(angleDiff(want, this.player.heading), -AIM_CONE, AIM_CONE);
+  playerAimAngle(player = this.localPlayer) {
+    const car = player.car;
+    // LOCAL player aims with the cursor; a remote/networked player supplies an
+    // aim angle from their input stream; otherwise fire straight out the nose.
+    const want = player.isLocal ? this.mouseWorldAngle() : player.aimAngle;
+    if (want === null || want === undefined) return car.heading;
+    return car.heading + clamp(angleDiff(want, car.heading), -AIM_CONE, AIM_CONE);
   }
 
   // Fire the equipped weapon on FIRE. Tier scales damage + fire rate; RELOAD
   // stat also shortens the interval. Ram charges in updateRam and the railgun
   // in updateRailgun (hold abilities — they don't fire here).
-  updateWeapon(dt) {
-    this.resolvePlayerInputs();
-    const reloadMul = 1 + this.stats.reload * 0.08;
-    for (const w of [this.loadout.weapon1]) {
+  updateWeapon(dt, player = this.localPlayer) {
+    this.resolvePlayerInputs(player);
+    const reloadMul = 1 + player.stats.reload * 0.08;
+    for (const w of [player.loadout.weapon1]) {
       if (!w) continue;
       w.cd = (w.cd || 0) - dt;
       if (w.type === "ram" || w.type === "railgun") continue;
-      if (!this._fireActive || w.cd > 0 || this.player.stunT > 0) continue; // spammables on the FIRE channel; stunned → can't fire
+      if (!player._fireActive || w.cd > 0 || player.car.stunT > 0) continue; // spammables on the FIRE channel; stunned → can't fire
       const t = w.tier + 1, dmul = 1 + 0.12 * t, rate = reloadMul * (1 + 0.10 * t);
-      const p = this.player, f = p.forward;
-      const aimAng = this.playerAimAngle(); // mouse-aim within the forward cone
+      const p = player.car, f = p.forward;
+      const aimAng = this.playerAimAngle(player); // mouse-aim within the forward cone
       const af = { x: Math.cos(aimAng), y: Math.sin(aimAng) };
       if (w.type === "cannon") {
         const S = WEAPON_STATS.cannon; // SHARED table — bots fire the identical gun
@@ -456,7 +469,7 @@ class ArenaGame {
       } else if (w.type === "minelayer") {
         w.cd = WEAPON_STATS.minelayer.interval / rate;
         const mx = p.x - f.x * (p.length / 2 + 4), my = p.y - f.y * (p.length / 2 + 4);
-        this.mines.push({ x: mx, y: my, owner: this.player, arm: 1.0, age: 0, dmg: this.mineDamageOf(this.player), dead: false });
+        this.mines.push({ x: mx, y: my, owner: p, arm: 1.0, age: 0, dmg: this.mineDamageOf(p), dead: false });
         if (this.mines.length > 25) this.mines.shift();
         this.particles.scrapPuff(mx, my);
       }
@@ -466,8 +479,8 @@ class ArenaGame {
   // -- minelayer HOOK: fire a grapple that grabs the first car in its path and
   // reels it toward you (into your minefield). Separate from FIRE/autofire —
   // right-click (toward the cursor) on desktop, a HOOK button on touch. --------
-  hasMinelayer() {
-    const L = this.loadout;
+  hasMinelayer(player = this.localPlayer) {
+    const L = player.loadout;
     return !!(L && L.weapon1 && L.weapon1.type === "minelayer");
   }
 
@@ -488,28 +501,30 @@ class ArenaGame {
     return HOOK_CD - (HOOK_CD - HOOK_CD_MIN) * clamp((reload || 0) / STAT_CAP, 0, 1);
   }
 
-  updatePlayerHook(dt) {
-    this.resolvePlayerInputs();
-    if (this.hookCd > 0) this.hookCd -= dt;
+  updatePlayerHook(dt, player = this.localPlayer) {
+    this.resolvePlayerInputs(player);
+    if (player.hookCd > 0) player.hookCd -= dt;
+    const car = player.car;
     // the hook fires on the ability channel (right-click / touch ability button)
-    if (!this.hasMinelayer() || !this._abilityHeld || this.hookCd > 0 || this.player.stunT > 0) return; // stunned → no hook
+    if (!this.hasMinelayer(player) || !player._abilityHeld || player.hookCd > 0 || car.stunT > 0) return; // stunned → no hook
     // FULL-CIRCLE toward the cursor (no forward-cone clamp — user); touch auto-aims
     let ang;
-    if (this.touchMode) ang = this.hookAutoAim(this.player);
-    else { ang = this.mouseWorldAngle(); if (ang === null) ang = this.player.heading; }
-    if (this.fireHook(this.player, ang)) this.hookCd = this.hookCooldown(this.stats.reload);
+    if (player.isLocal && this.touchMode) ang = this.hookAutoAim(car);
+    else if (player.isLocal) { ang = this.mouseWorldAngle(); if (ang === null) ang = car.heading; }
+    else ang = player.aimAngle !== null && player.aimAngle !== undefined ? player.aimAngle : car.heading;
+    if (this.fireHook(car, ang)) player.hookCd = this.hookCooldown(player.stats.reload);
   }
 
   // RAILGUN (loot-only): fires a PIERCING slug on the FIRE channel — no
   // charge-up (user), just a long RELOAD between shots (strength budget:
   // cars 1, scrap piles 1.5, mines/crates 1, the boss absorbs it).
-  updateRailgun(dt) {
-    if (this.railCd > 0) this.railCd -= dt;
-    if (!this.hasRailgun()) return;
-    this.resolvePlayerInputs();
-    if (!this._fireActive || this.railCd > 0 || this.player.stunT > 0) return;
-    this.fireRailgun(this.player, this.playerAimAngle(), this.loadout.weapon1.tier);
-    this.railCd = RAIL_CD / (1 + this.stats.reload * 0.08); // RELOAD shortens it
+  updateRailgun(dt, player = this.localPlayer) {
+    if (player.railCd > 0) player.railCd -= dt;
+    if (!this.hasRailgun(player)) return;
+    this.resolvePlayerInputs(player);
+    if (!player._fireActive || player.railCd > 0 || player.car.stunT > 0) return;
+    this.fireRailgun(player.car, this.playerAimAngle(player), player.loadout.weapon1.tier);
+    player.railCd = RAIL_CD / (1 + player.stats.reload * 0.08); // RELOAD shortens it
   }
 
   // shared player/bot railgun shot. Damage = RAIL_DMG x tier — the EXACT same
@@ -629,8 +644,9 @@ class ArenaGame {
   // the equipped minelayer's tier for a car (player: the single weapon slot;
   // bot: its weapon), or 0 if none — drives mine damage + hook speed
   minelayerTierOf(owner) {
-    if (owner === this.player) {
-      const L = this.loadout;
+    const pl = this.playerOf(owner);
+    if (pl) {
+      const L = pl.loadout || {};
       const w = (L.weapon1 && L.weapon1.type === "minelayer") ? L.weapon1 : null;
       return w ? w.tier : 0;
     }
@@ -813,13 +829,26 @@ class ArenaGame {
 
   // -- combat helpers ---------------------------------------------------------
 
-  cars() { return [this.player, ...this.bots]; }            // all live-ish cars
-  isDeadCar(car) { return car === this.player ? this.dead : car.deadFlag; }
+  // every HUMAN player's car + every bot (multiplayer: players is a list now)
+  cars() {
+    const out = [];
+    for (const pl of this.players) if (pl.car) out.push(pl.car);
+    for (const b of this.bots) out.push(b);
+    return out;
+  }
+  // the ArenaPlayer that owns this car (null if it's a bot/boss) — the multi-
+  // player replacement for `car === this.player` gameplay checks
+  playerOf(car) {
+    for (const pl of this.players) if (pl.car === car) return pl;
+    return null;
+  }
+  isDeadCar(car) { const pl = this.playerOf(car); return pl ? pl.dead : car.deadFlag; }
 
   // route damage to the right HP pool + record the attacker for attribution
   hurtCar(car, amount, source, hitX, hitY, srcType) {
     if (source && source.noDmgT !== undefined) source.noDmgT = 0; // attacker IS landing damage
-    if (car === this.player) { this.playerLastHitBy = source; this.damagePlayer(amount, hitX, hitY, srcType, source); }
+    const pl = this.playerOf(car);
+    if (pl) { pl.playerLastHitBy = source; this.damagePlayer(amount, hitX, hitY, srcType, source, pl); }
     else { car.lastHitBy = source; car.hurt(amount, hitX, hitY, srcType, source); }
   }
 
@@ -1171,32 +1200,33 @@ class ArenaGame {
   }
 
   // ARMOR reduces damage taken; hitting 0 HP wrecks the player.
-  damagePlayer(amount, hitX, hitY, srcType, source) {
-    if (this.dead) return;
-    if (this._godmode) return; // TEST MODE (dev) — remove later
+  damagePlayer(amount, hitX, hitY, srcType, source, player = this.localPlayer) {
+    if (player.dead) return;
+    if (player._godmode) return; // TEST MODE (dev) — remove later
+    const car = player.car;
     // RAM primary defense (user spec): while charging/ramming, frontal BULLETS
     // do 0 damage and a frontal CRASH does 0 UNLESS the other car is ALSO a
     // charging ram (mines always hurt); everything else is 35% off — ONLY when
     // RAM is in the PRIMARY (weapon1) slot.
-    const ramPrimary = !!(this.loadout && this.loadout.weapon1 && this.loadout.weapon1.type === "ram");
-    amount *= ramDamageMul(this.player, ramPrimary, ramLaunchingFast(this.player, this.ramBoostT), hitX, hitY, srcType, source);
-    this.outOfCombat = 0; // taking a hit resets the regen timer
-    const dealt = amount / (1 + this.partDmgReduce); // ARMOR part damage reduction
-    this.hp -= dealt;
-    chipWheels(this.player, dealt, hitX, hitY, srcType); // bullets chew the closest wheel, blasts the closest two
-    if (amount > 0) this.player.sinceHit = 0;   // any real hit stalls the wheel mend
-    if (this.hp <= 0) {
-      this.dead = true;
-      this.respawnT = 1.2; // brief wreck moment, then the death menu (main.js)
-      const killer = this.playerLastHitBy;
-      this.feedWreck(killer, this.player);
-      this.bumpStreak(killer);              // your killer's streak grows
-      this.playerStreak = 0;                // yours resets on death
-      if (killer && killer.gainXp) this.nemesis = killer; // a BOT becomes your nemesis
-      this.dropPart(this.player.x, this.player.y, this.playerDeathDrop()); // drop ONE part, weighted to your best (user)
-      this.particles.explosion(this.player.x, this.player.y);
-      if (this.audio.playGameOver) this.audio.playGameOver();
-      this.banner("WRECKED", "");
+    const ramPrimary = !!(player.loadout && player.loadout.weapon1 && player.loadout.weapon1.type === "ram");
+    amount *= ramDamageMul(car, ramPrimary, ramLaunchingFast(car, player.ramBoostT), hitX, hitY, srcType, source);
+    player.outOfCombat = 0; // taking a hit resets the regen timer
+    const dealt = amount / (1 + player.partDmgReduce); // ARMOR part damage reduction
+    player.hp -= dealt;
+    chipWheels(car, dealt, hitX, hitY, srcType); // bullets chew the closest wheel, blasts the closest two
+    if (amount > 0) car.sinceHit = 0;   // any real hit stalls the wheel mend
+    if (player.hp <= 0) {
+      player.dead = true;
+      player.respawnT = 1.2; // brief wreck moment, then the death menu (main.js)
+      const killer = player.playerLastHitBy;
+      this.feedWreck(killer, car);
+      this.bumpStreak(killer);              // the killer's streak grows
+      player.playerStreak = 0;              // this player's resets on death
+      if (killer && killer.gainXp) player.nemesis = killer; // a BOT becomes their nemesis
+      this.dropPart(car.x, car.y, this.playerDeathDrop(player)); // drop ONE part, weighted to their best (user)
+      this.particles.explosion(car.x, car.y);
+      if (player.isLocal && this.audio.playGameOver) this.audio.playGameOver();
+      if (player.isLocal) this.banner("WRECKED", "");
     }
   }
 
@@ -1224,37 +1254,37 @@ class ArenaGame {
   // Respawn with a freshly CHOSEN weapon (the death flow re-opens the weapon
   // picker — user request). A re-pick becomes your new default `baseWeapon`;
   // omitting it keeps the last one.
-  respawnPlayer(weapon) {
-    this.dead = false;
-    this.spectate = false;
-    const w = weapon || this.baseWeapon;
-    if (weapon) this.baseWeapon = weapon;               // the new pick sticks for next time
-    const kept = 0.10 * arenaTotalXp(this.level, this.xp); // keep 10% of total XP on death (user)
+  respawnPlayer(weapon, player = this.localPlayer) {
+    player.dead = false;
+    if (player.isLocal) this.spectate = false;          // spectate is a LOCAL camera concept
+    const w = weapon || player.baseWeapon;
+    if (weapon) player.baseWeapon = weapon;             // the new pick sticks for next time
+    const kept = 0.10 * arenaTotalXp(player.level, player.xp); // keep 10% of total XP on death (user)
     const lv = arenaLevelFromTotal(kept, LEVEL_CAP);
-    this.level = lv.level; this.xp = lv.xp;
-    this.statPoints = this.level - 1;                   // points for your reduced level
-    this.stats = { health: 0, speed: 0, reload: 0, regen: 0 };
-    this.slots = { armor: this.level >= 5 };
-    this.startWeapon = w;
-    this.loadout = this.freshLoadout(w);
-    this.applyStats();
-    this.hp = this.maxHp;
-    healWheelsFull(this.player); // fresh life = fresh wheels
-    this.railCd = 0;
-    this.outOfCombat = 0;
+    player.level = lv.level; player.xp = lv.xp;
+    player.statPoints = player.level - 1;               // points for the reduced level
+    player.stats = { health: 0, speed: 0, reload: 0, regen: 0 };
+    player.slots = { armor: player.level >= 5 };
+    player.startWeapon = w;
+    player.loadout = this.freshLoadout(w);
+    this.applyStats(player);
+    player.hp = player.maxHp;
+    healWheelsFull(player.car); // fresh life = fresh wheels
+    player.railCd = 0;
+    player.outOfCombat = 0;
     const sp = this.playerSpawn();
-    this.player.x = sp.x; this.player.y = sp.y;
-    this.player.vx = this.player.vy = 0;
-    this.player.stunT = 0; // clear any leftover hook stun
-    this.banner("RESPAWNED", "back to level " + this.level);
+    player.car.x = sp.x; player.car.y = sp.y;
+    player.car.vx = player.car.vy = 0;
+    player.car.stunT = 0; // clear any leftover hook stun
+    if (player.isLocal) this.banner("RESPAWNED", "back to level " + player.level);
   }
 
   // -- part loot: wrecks drop parts; equip them from the loadout panel --------
 
   // on PLAYER death, drop ONE equipped part chosen at random but WEIGHTED toward
   // the highest tier — same weighting bots use in pickDrop (user).
-  playerDeathDrop() {
-    const L = this.loadout;
+  playerDeathDrop(player = this.localPlayer) {
+    const L = player.loadout;
     const parts = [L.tires, L.engine, L.weapon1, L.armor].filter(Boolean);
     if (!parts.length) return null;
     let total = 0; for (const p of parts) total += (p.tier + 1) * (p.tier + 1);
@@ -1466,57 +1496,16 @@ class ArenaGame {
     if (isPortrait && !this.paused) this.togglePause();
   }
 
-  update(dt) {
-    if (!this.started || this.paused) return;
-    this._t += dt;
-    const p = this.player;
-
-    // live standings + bounty target (throttled — cheap but not every frame)
-    this.lbTimer -= dt;
-    if (this.lbTimer <= 0) { this.lbTimer = 0.5; this.computeLeaderboard(); }
-
-    // WRECKED: the world keeps living; the death menu (or spectate) decides
-    // what happens next — no auto-respawn.
-    if (this.dead) {
-      if (this.respawnT > 0) this.respawnT -= dt; // wreck moment before the menu
-      this.updateBots(dt);
-      this.updateBossWorld(dt);
-      this.updateCollisions(); // bots still crash into each other + the Titan
-      this.updateHooks(dt);    // bots keep hooking each other while you spectate
-      this.updateProjectiles(dt);
-      this.updateMines(dt);
-      this.updateCrates(dt);   // crates keep smashing/respawning while you spectate
-      this.updateDrops(dt);
-      // scrap eaten by bots still respawns (same top-up as the alive branch)
-      if (this.scrap.some((s) => s.dead)) {
-        this.scrap = this.scrap.filter((s) => !s.dead);
-        this.scatterScrap(SCRAP_TARGET);
-      }
-      // bots keep laying rubber while you're wrecked/spectating (cosmetic)
-      this.renderer.updateSkids(dt);
-      for (const b of this.bots) if (!b.deadFlag) this.renderer.recordSkids(b);
-      this.particles.update(dt);
-      this.tickBanners(dt);
-      this.audio.setEngine(0, false); // no car — kill the engine drone
-      this.audio.setScreech(0);
-      // spectate: camera follows the chosen living bot (clamped like normal play)
-      if (this.spectate) {
-        const t = this.spectateTarget();
-        if (t) {
-          this.cam.x = clamp(t.x, VIEW.w / 2, ARENA.w - VIEW.w / 2);
-          this.cam.y = clamp(t.y, VIEW.h / 2, ARENA.h - VIEW.h / 2);
-        }
-      }
-      return;
-    }
-
+  // one ALIVE human's pre-world step: ram charge, drive from THEIR input,
+  // wall-clamp, motion trackers, stun tick, and weapon/hook/railgun fire.
+  // Runs before the world combat step (bots/collisions/projectiles).
+  updatePlayerDrive(dt, player) {
+    const p = player.car;
     // ram charge/boost sets p.boost, which the physics reads — before integrate
-    this.updateRam(dt);
-
-    // drive (shared keyboard/joystick handling)
-    const d = readDrive(this.input, p.heading);
+    this.updateRam(dt, player);
+    // drive (shared keyboard/joystick handling; each player has their own input)
+    const d = readDrive(player.input, p.heading);
     p.integrate(dt, d.throttle, d.steer, d.handbrake);
-
     // world-boundary walls: clamp + soft bounce
     const m = ARENA.wall + p.radius;
     if (p.x < m)            { p.x = m;            if (p.vx < 0) p.vx *= -0.4; }
@@ -1524,13 +1513,31 @@ class ArenaGame {
     if (p.y < m)            { p.y = m;            if (p.vy < 0) p.vy *= -0.4; }
     if (p.y > ARENA.h - m)  { p.y = ARENA.h - m;  if (p.vy > 0) p.vy *= -0.4; }
     trackArenaMotion(p, dt); // bots lead their shots off these trackers
+    if (p.stunT > 0) p.stunT -= dt; // hooked → stunned; ticks down after the reel
+    // weapon fire
+    this.updateWeapon(dt, player);
+    this.updatePlayerHook(dt, player); // minelayer hook (right-click / HOOK button)
+    this.updateRailgun(dt, player);    // loot-only railgun (FIRE + long reload)
+  }
 
-    if (p.stunT > 0) p.stunT -= dt; // hooked → stunned (can't shoot); ticks down after the reel
+  update(dt) {
+    if (!this.started || this.paused) return;
+    this._t += dt;
+    const local = this.localPlayer, lc = local.car;
 
-    // weapon fire, then combat: bots think, Titan crawls, cars collide, shots resolve
-    this.updateWeapon(dt);
-    this.updatePlayerHook(dt); // fire the minelayer hook (right-click / HOOK button)
-    this.updateRailgun(dt);    // charge/release the loot-only railgun (left hold / SNIPE)
+    // live standings + bounty target (throttled — cheap but not every frame)
+    this.lbTimer -= dt;
+    if (this.lbTimer <= 0) { this.lbTimer = 0.5; this.computeLeaderboard(); }
+
+    // wreck moment before the LOCAL death menu shows (main.js reads respawnT)
+    if (local.dead && local.respawnT > 0) local.respawnT -= dt;
+
+    // --- each ALIVE player drives + fires (BEFORE the world combat step) ---
+    for (const pl of this.players) if (!pl.dead) this.updatePlayerDrive(dt, pl);
+
+    // --- WORLD: always sims, so a wrecked/spectating local player never
+    //     freezes the arena (this is what the spectate-parity rule guaranteed;
+    //     it's now structural — one code path for alive + dead) ---
     this.updateBots(dt);
     this.updateBossWorld(dt);
     this.updateCollisions();
@@ -1540,22 +1547,26 @@ class ArenaGame {
     this.updateCrates(dt);
     this.updateDrops(dt);
 
-    // first-encounter banner the first time you get near EACH boss type
-    if (this.boss && !this.boss.dead && !this._sawBossKinds[this.boss.kind] &&
-        dist(p.x, p.y, this.boss.x, this.boss.y) < 1000) {
+    // first-encounter banner the first time the LOCAL player nears EACH boss type
+    if (!local.dead && this.boss && !this.boss.dead && !this._sawBossKinds[this.boss.kind] &&
+        dist(lc.x, lc.y, this.boss.x, this.boss.y) < 1000) {
       this._sawBossKinds[this.boss.kind] = true;
       this.banner(this.boss.name, this.boss.tagline);
     }
 
-    // XP from scrap: drive over a pile to absorb it (the other farm path).
-    for (const s of this.scrap) {
-      if (s.dead || dist(p.x, p.y, s.x, s.y) >= s.radius + p.radius * 0.6) continue;
-      const drain = Math.min(150 * dt, s.amount);
-      s.amount -= drain;
-      this.addXp(drain * XP_PER_SCRAP);
-      this.healFromScrap(drain, s.maxAmount);
-      if (Math.random() < dt * 24) this.particles.repairGlow(p.x, p.y); // cosmetic sparkle
-      if (s.amount <= 0) s.dead = true;
+    // XP from scrap: each alive player farms the piles they drive over.
+    for (const pl of this.players) {
+      if (pl.dead) continue;
+      const p = pl.car;
+      for (const s of this.scrap) {
+        if (s.dead || dist(p.x, p.y, s.x, s.y) >= s.radius + p.radius * 0.6) continue;
+        const drain = Math.min(150 * dt, s.amount);
+        s.amount -= drain;
+        this.addXp(drain * XP_PER_SCRAP, pl);
+        this.healFromScrap(drain, s.maxAmount, pl);
+        if (pl.isLocal && Math.random() < dt * 24) this.particles.repairGlow(p.x, p.y); // cosmetic
+        if (s.amount <= 0) s.dead = true;
+      }
     }
     // respawn any scrap consumed by bullets OR drive-over (seeded → deterministic)
     if (this.scrap.some((s) => s.dead)) {
@@ -1565,35 +1576,45 @@ class ArenaGame {
 
     // skid marks: age existing rubber + lay new segments for any sliding car
     this.renderer.updateSkids(dt);
-    this.renderer.recordSkids(p);
+    for (const pl of this.players) if (!pl.dead) this.renderer.recordSkids(pl.car);
     for (const b of this.bots) if (!b.deadFlag) this.renderer.recordSkids(b);
 
-    // wheels mend after 10s without a hit (damagePlayer zeroes player.sinceHit);
-    // the REGEN stat trims the wait, 0.5s per point (user)
-    tickWheelRepair(p, dt, WHEEL_REPAIR_DELAY - 0.5 * this.stats.regen);
-
-    // passive health regen: only after REGEN_DELAY seconds without taking a hit
-    // (any damage above resets outOfCombat). Rate scales with the REGEN stat.
-    this.outOfCombat += dt;
-    if (this.hp < this.maxHp && this.outOfCombat >= REGEN_DELAY) {
-      const rate = REGEN_BASE + this.stats.regen * 0.005; // +0.5%/point
-      this.hp = Math.min(this.maxHp, this.hp + this.maxHp * rate * dt);
-      if (fxRand() < dt * 8) this.particles.repairGlow(p.x, p.y); // cosmetic
+    // wheels mend + passive out-of-combat regen (each alive player; REGEN both
+    // trims the wheel-mend wait 0.5s/pt and adds 0.5%/s to the heal rate)
+    for (const pl of this.players) {
+      if (pl.dead) continue;
+      const p = pl.car;
+      tickWheelRepair(p, dt, WHEEL_REPAIR_DELAY - 0.5 * pl.stats.regen);
+      pl.outOfCombat += dt;
+      if (pl.hp < pl.maxHp && pl.outOfCombat >= REGEN_DELAY) {
+        const rate = REGEN_BASE + pl.stats.regen * 0.005; // +0.5%/point
+        pl.hp = Math.min(pl.maxHp, pl.hp + pl.maxHp * rate * dt);
+        if (pl.isLocal && fxRand() < dt * 8) this.particles.repairGlow(p.x, p.y); // cosmetic
+      }
     }
 
     this.particles.update(dt);
     this.tickBanners(dt);
 
-    // camera follows the player, clamped so the view never shows past the walls.
-    // Viewport is the LOGICAL VIEW (area-locked to the window; the backing store
-    // is hi-dpi and the renderer scales its context, so the visible world AREA
-    // stays constant across monitors = same amount seen, no per-screen edge).
-    const vw = VIEW.w, vh = VIEW.h;
-    this.cam.x = clamp(p.x, vw / 2, ARENA.w - vw / 2);
-    this.cam.y = clamp(p.y, vh / 2, ARENA.h - vh / 2);
-
-    // engine + tire audio
-    this.audio.setEngine(clamp(p.speed / p.maxSpeed, 0, 1), false);
-    this.audio.setScreech(p.speed > 60 ? clamp((p.lateralSpeed - 70) / 180, 0, 1) : 0);
+    // --- LOCAL view: camera clamp + engine/tire audio. Wrecked → quiet the
+    //     engine + follow the spectated car (the viewport is the area-locked
+    //     logical VIEW, so the visible world AREA is constant across monitors). ---
+    if (local.dead) {
+      this.audio.setEngine(0, false);
+      this.audio.setScreech(0);
+      if (this.spectate) {
+        const t = this.spectateTarget();
+        if (t) {
+          this.cam.x = clamp(t.x, VIEW.w / 2, ARENA.w - VIEW.w / 2);
+          this.cam.y = clamp(t.y, VIEW.h / 2, ARENA.h - VIEW.h / 2);
+        }
+      }
+    } else {
+      const vw = VIEW.w, vh = VIEW.h;
+      this.cam.x = clamp(lc.x, vw / 2, ARENA.w - vw / 2);
+      this.cam.y = clamp(lc.y, vh / 2, ARENA.h - vh / 2);
+      this.audio.setEngine(clamp(lc.speed / lc.maxSpeed, 0, 1), false);
+      this.audio.setScreech(lc.speed > 60 ? clamp((lc.lateralSpeed - 70) / 180, 0, 1) : 0);
+    }
   }
 }

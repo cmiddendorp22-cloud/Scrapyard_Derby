@@ -50,8 +50,15 @@ input.js is the shared keyboard/joystick→car-controls helper both use.
 Load order matters (classic scripts, see index.html):
 `theme → utils → rng → input → audio → particles → projectile → scrap → car →
 player → enemy → waves → render → ui → upgrades → game →
-arena/arena-render → arena/arena → main`
+arena/arena-parts → arena/arena-player → arena/arena-render → arena/arena-bot →
+arena/arena-boss → arena/arena → main`
 
+- `js/arena/arena-player.js` — `ArenaPlayer`: one human's game-state (car +
+  hp/stats/loadout/level/weapon-cooldowns), extracted off ArenaGame so the sim
+  can carry MULTIPLE humans (multiplayer M0). ArenaGame holds `players[]` +
+  `localPlayer`; `defineLocalPlayerAccessors` proxies `this.hp`/`this.stats`/
+  `this.player`/... to `localPlayer` so all existing call sites + tests are
+  untouched. (Named ArenaPlayer to avoid the Gauntlet's `Player` class.)
 - `js/theme.js` — THE color palette (`THEME`): single source for UI chrome +
   gameplay-identity colors. Canvas code reads `THEME.*` directly; at load it
   injects every entry as a CSS variable (`--kebab-case`) so style.css uses
@@ -493,6 +500,74 @@ cascade bug that text-only testing never would.
 - **2026-07-09** — Player car now has a floating HP bar (user), same size/pos/
   style as the bots' (`drawCar` for the player, then a bar above it in the
   world pass) but GREEN (`#5fd35f`) so yours reads apart from the red bot bars.
+- **2026-07-11** — MULTIPLAYER M1 (server side): AUTHORITATIVE ws SERVER, built
+  + verified headless (user hosts the client on Netlify — which can't run a
+  realtime server, so the client stays static-on-Netlify and the sim server
+  runs separately; decided a dedicated Node host over WebRTC P2P). New `server/`
+  folder, ISOLATED from the client root so Netlify keeps serving pure static
+  files (root has no package.json; `server/` has its own + `ws` 8.21, git-
+  ignored node_modules). `server/sim-host.js` loads the SAME game sim scripts
+  the browser runs (every `<script>` in index.html EXCEPT main.js) into a Node
+  vm with the boot-test's stubbed DOM/canvas + a no-op renderer/audio, and
+  bridges out `ArenaGame`/`ArenaPlayer`/`Car`/`ARENA`/`VIEW`/`RNG`/`readDrive`;
+  `createWorld()` builds one authoritative `ArenaGame`, marks the constructor's
+  localPlayer dead + empties `players[]` (no human sits at the server — clients
+  fill it). `server/server.js` (Node + `ws`): fixed-timestep loop (60Hz sim,
+  ~20Hz snapshot), each connection = a new `ArenaPlayer` with its own input
+  object fed by `{type:"input",...}` messages, broadcasts compact JSON
+  `{type:"snap", cars/bullets/mines/boss/scrap/crates/drops, self}` to all.
+  Verified with Node ws clients (server/test-sim|client|two.js): headless world
+  ticks, a client's input drives its car (443px), snapshots stream ~20Hz, and
+  TWO clients see each other's cars in one world. `server/README.md` documents
+  run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
+  input, and RENDER server snapshots (stop local simming); then M2 interpolation.
+  The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-07-11** — MULTIPLAYER M0 steps 2-4: N-PLAYER SIM (offline; still one
+  local human, but the sim now carries N). Every per-human method takes an
+  optional `player = this.localPlayer` arg (so all existing zero-arg call sites
+  + tests are unchanged) and uses `player.car`/`player.hp`/... instead of
+  `this.*`: resolvePlayerInputs, updateRam, updateWeapon, updatePlayerHook,
+  updateRailgun, playerAimAngle, hasRam/hasRailgun/hasMinelayer, addXp, levelUp,
+  spendStat, applyStats, healFromScrap, xpToNext, damagePlayer, respawnPlayer,
+  playerDeathDrop. Combat routing generalized: `cars()` = every player car +
+  bots; new `playerOf(car)` (the multi-player replacement for `car ===
+  this.player`) drives `isDeadCar`, `hurtCar`, `minelayerTierOf`; damage to any
+  player's car routes to that ArenaPlayer. Local-only feedback (level-up
+  banner/jingle, WRECKED/RESPAWNED banners, game-over sound, spectate) is gated
+  on `player.isLocal`. UPDATE LOOP restructured: the WORLD always sims (one code
+  path — the old alive/dead branch split is gone; spectate-parity is now
+  structural), each ALIVE player runs `updatePlayerDrive` (ram/drive-from-own-
+  input/walls/weapons) BEFORE the world step, then per-player scrap-XP + wheel-
+  mend + regen after — RNG-consumer order preserved byte-for-byte (determinism
+  green). RENDER: the world pass draws EVERY alive player car via
+  `drawPlayerCar` (local = blue, other humans = teal + name/level tag, green HP
+  bar); on-car railgun state reads `playerOf(car)`. `ArenaPlayer` gained
+  `_fireActive`/`_abilityHeld`/`aimAngle` (a remote player supplies aimAngle
+  from its input stream; local uses the cursor). Fixed a test flake exposed by
+  the parity-buffed bots (arena-test's camera check now neutralizes combat up
+  front — a dead local player correctly freezes the camera, which isn't what
+  that foundation test measures). Gated by a new 2-player test (2nd player
+  drives + fires from its own input, per-player damage routing, local
+  unaffected) — 8/8 stability + full regression green. NEXT: M1 — a Node + `ws`
+  server runs this sim headless, 2 browsers connect and render server snapshots.
+- **2026-07-11** — MULTIPLAYER M0 step 1: PLAYER STATE EXTRACTION (user:
+  started the multiplayer effort; decided friends-first rooms, Node + `ws`
+  server, and to do the offline N-player refactor first). New `ArenaPlayer`
+  (js/arena/arena-player.js) owns one human's game-state — car, progression
+  (level/xp/stats/loadout/slots), combat (hp/maxHp/dead/kills/nemesis/streak/
+  outOfCombat), and weapon cooldowns (ram/hook/railgun). ArenaGame now holds
+  `this.players` (a list) + `this.localPlayer`; `defineLocalPlayerAccessors`
+  installs get/set proxies so `this.hp`/`this.stats`/`this.loadout`/
+  `this.level`/`this.player`/... all route to `localPlayer` — every existing
+  call site in arena.js/arena-render.js/main.js AND all 6 test suites are
+  UNCHANGED and green. Behavior-preserving structural change: WHERE the state
+  lives moved, not what it does. reset()'s field assignments route through the
+  accessors so its body was untouched. NEXT (M0 step 2): generalize the
+  per-human sim methods (updateWeapon/updateRam/updatePlayerHook/updateRailgun/
+  damagePlayer/regen/driving) to take a `player` arg + loop over players[], so
+  multiple humans can be simulated; then split input from control (step 3) and
+  render all player cars (step 4), before any networking (M1). Gated by a new
+  M0 test (localPlayer/players wiring + accessor proxying).
 - **2026-07-10** — GLOBAL damage/health halving + guide fixes (user).
   (1) HEALTH stat halved: +25 → +12.5 maxHp per point (player AND bots — one
   formula each, tooltip updated). (2) ALL weapon damage halved for everyone

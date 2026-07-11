@@ -224,14 +224,11 @@ class ArenaRenderer {
     for (const b of g.bullets || []) { if (onScreen(b.x, b.y, 20)) this.drawBullet(b); }
     for (const bot of g.bots || []) { if (!bot.deadFlag && onScreen(bot.x, bot.y, 60)) this.drawBot(bot); }
 
-    if (!g.dead) {
-      this.drawCar(g.player, THEME.player); // hidden while wrecked
-      // HP bar above your car, same as the bots' (green = yours)
-      const p = g.player, hy = p.y - p.radius - 13, hw = 40;
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      ctx.fillRect(p.x - hw / 2, hy, hw, 5);
-      ctx.fillStyle = THEME.heal;
-      ctx.fillRect(p.x - hw / 2, hy, hw * clamp(g.hp / g.maxHp, 0, 1), 5);
+    // every ALIVE human player's car (multiplayer): the LOCAL one is blue,
+    // other humans teal with a name tag; all get a green HP bar (vs red bots).
+    for (const pl of g.players) {
+      if (pl.dead || !pl.car || !onScreen(pl.car.x, pl.car.y, 60)) continue;
+      this.drawPlayerCar(pl);
     }
     if (g.particles) g.particles.draw(ctx); // level-up + combat bursts (world space)
     ctx.restore();
@@ -558,16 +555,36 @@ class ArenaRenderer {
     const wid = weapon || this.arena.startWeapon;
     this._railState = null;
     if (wid === "railgun") {
-      const g = this.arena;
-      if (car === g.player) {
-        this._railState = { reload: g.railCd > 0 ? clamp(g.railCd / RAIL_CD, 0, 1) : 0 };
-      } else if (car.fireTimer !== undefined) {
+      const g = this.arena, pl = g.playerOf(car);
+      if (pl) { // any HUMAN player — reload lives on their ArenaPlayer
+        this._railState = { reload: pl.railCd > 0 ? clamp(pl.railCd / RAIL_CD, 0, 1) : 0 };
+      } else if (car.fireTimer !== undefined) { // a bot
         this._railState = { reload: car.fireTimer > 0 ? clamp(car.fireTimer / 2.6, 0, 1) : 0 };
       }
     }
     this.drawWeaponGear(ctx, wid, L, W);
     this._railState = null;
     ctx.restore();
+  }
+
+  // an alive HUMAN player's car + floating HP bar. LOCAL = blue; other humans
+  // = teal with a name+level tag (so remote players read apart from you AND
+  // from the red bots). Called per-player in the world pass.
+  drawPlayerCar(pl) {
+    const ctx = this.ctx, car = pl.car;
+    const weapon = pl.loadout && pl.loadout.weapon1 ? pl.loadout.weapon1.type : pl.startWeapon;
+    this.drawCar(car, pl.isLocal ? THEME.player : "#4ad0a0", weapon);
+    if (!pl.isLocal) { // name tag for OTHER humans (you know who you are)
+      ctx.fillStyle = THEME.text;
+      ctx.font = "bold 11px 'Segoe UI', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(pl.name + "  L" + pl.level, car.x, car.y - car.radius - 18);
+    }
+    const hy = car.y - car.radius - 13, hw = 40;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(car.x - hw / 2, hy, hw, 5);
+    ctx.fillStyle = THEME.heal;
+    ctx.fillRect(car.x - hw / 2, hy, hw * clamp(pl.hp / pl.maxHp, 0, 1), 5);
   }
 
   // the central Junk Titan: a big armored hull of 4 rim plates around a glowing
