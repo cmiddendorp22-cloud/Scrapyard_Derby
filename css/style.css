@@ -870,6 +870,33 @@ body.touch-mode #spectate-ui { top: 8px; }
   width: 44px;
   text-align: right;
 }
+/* PLAY ONLINE join form */
+#online-screen .options-row input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+#online-screen .options-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+#online-status {
+  min-height: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--warn);
+  text-align: center;
+}
+#online-status.ok { color: var(--heal); }
+#online-status.err { color: var(--danger); }
+
 /* HUD LAYOUT: global UI scale (set as --ui-scale by main.js) applies to the
    DOM HUD column + touch controls; canvas groups scale in the renderer */
 #arena-stats, #arena-loadout, #loadout-toggle {

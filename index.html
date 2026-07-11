@@ -22,9 +22,35 @@
       <button id="start-arena-btn">SCRAPYARD ARENA
         <span class="mode-sub">Open-world FFA &mdash; level up, loot parts off wrecks</span>
       </button>
+      <button id="start-online-btn">PLAY ONLINE
+        <span class="mode-sub">Join a friend's server and play together</span>
+      </button>
     </div>
     <!-- ===== TEST MODE (dev-only, DELETE LATER) ===== -->
     <button id="test-mode-btn">🛠 TEST MODE</button>
+  </div>
+
+  <!-- Join a friend's authoritative server (multiplayer M1) -->
+  <div id="online-screen" class="overlay hidden">
+    <div class="menu-panel">
+      <h1>PLAY ONLINE</h1>
+      <p>Enter your friend's server address + room code.</p>
+      <div class="options-row">
+        <label for="online-url">SERVER</label>
+        <input type="text" id="online-url" placeholder="wss://something.trycloudflare.com" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="options-row">
+        <label for="online-room">ROOM CODE</label>
+        <input type="text" id="online-room" placeholder="e.g. K7M2P" autocomplete="off" spellcheck="false" maxlength="16">
+      </div>
+      <div class="options-row">
+        <label for="online-name">YOUR NAME</label>
+        <input type="text" id="online-name" placeholder="YOU" autocomplete="off" spellcheck="false" maxlength="14">
+      </div>
+      <div id="online-status"></div>
+      <button id="online-join-btn">JOIN</button>
+      <button id="online-back-btn">BACK</button>
+    </div>
   </div>
 
   <div id="weapon-select" class="overlay hidden">
@@ -245,6 +271,7 @@
 
 <!-- Classic scripts (no modules) so the game runs straight from file:// with no server. Order matters. -->
 <script src="js/theme.js"></script>
+<script src="js/net.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/rng.js"></script>
 <script src="js/input.js"></script>

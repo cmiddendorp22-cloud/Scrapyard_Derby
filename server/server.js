@@ -73,8 +73,12 @@ function snapshot(selfId) {
   for (const pl of world.players) {
     if (!pl.car) continue;
     const w = pl.loadout && pl.loadout.weapon1 ? pl.loadout.weapon1.type : "cannon";
-    cars.push({ id: pl.netId, k: "p", x: r(pl.car.x), y: r(pl.car.y), h: r3(pl.car.heading),
-      hp: r(pl.hp), mhp: r(pl.maxHp), n: pl.name, lv: pl.level, w, dead: !!pl.dead });
+    const c = { id: pl.netId, k: "p", x: r(pl.car.x), y: r(pl.car.y), h: r3(pl.car.heading),
+      hp: r(pl.hp), mhp: r(pl.maxHp), n: pl.name, lv: pl.level, w, dead: !!pl.dead };
+    if (pl.netId === selfId) { // the receiving client's own HUD detail
+      c.xp = r(pl.xp); c.sp = pl.statPoints; c.st = pl.stats; c.slots = pl.slots;
+    }
+    cars.push(c);
   }
   for (const b of world.bots) {
     if (b.deadFlag) continue;
@@ -85,7 +89,7 @@ function snapshot(selfId) {
     rail: !!b.railgun, sid: b.shooter === carOfId(selfId) ? 1 : 0 }));
   const mines = world.mines.filter((m) => !m.dead).map((m) => ({ x: r(m.x), y: r(m.y), arm: m.arm > 0 ? 1 : 0 }));
   const boss = world.boss && !world.boss.dead ? { kind: world.boss.kind, x: r(world.boss.x), y: r(world.boss.y),
-    h: r3(world.boss.heading), hf: r3(world.boss.hpFrac ? world.boss.hpFrac() : 1),
+    h: r3(world.boss.heading), rad: r(world.boss.radius), hf: r3(world.boss.hpFrac ? world.boss.hpFrac() : 1),
     vul: world.boss.isVulnerable ? !!world.boss.isVulnerable() : false } : null;
   const scrap = world.scrap.filter((s) => !s.dead).map((s) => ({ x: r(s.x), y: r(s.y), a: r(s.amount) }));
   const crates = (world.crates || []).filter((c) => !c.dead).map((c) => ({ x: r(c.x), y: r(c.y) }));
@@ -154,6 +158,8 @@ wss.on("connection", (ws, req) => {
       if (typeof msg.aim === "number") player.aimAngle = msg.aim;
     } else if (msg.type === "name" && typeof msg.name === "string") {
       player.name = msg.name.slice(0, 14);
+    } else if (msg.type === "spendStat" && typeof msg.name === "string") {
+      world.spendStat(msg.name, player);
     } else if (msg.type === "respawn") {
       if (player.dead) world.respawnPlayer(msg.weapon, player);
     }

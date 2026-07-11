@@ -12,6 +12,10 @@
 
   // which controller the loop drives: null (menu) | game | arena
   let active = null;
+  // MULTIPLAYER (M1): when online, the client stops simulating — it streams
+  // input to the authoritative server and RENDERS the server's snapshots.
+  const net = new NetClient();
+  let onlineActive = false;
 
   // Letterbox the canvas to the window (fixed 16:9 via CSS size), and size its
   // BACKING STORE to real device pixels so it renders crisp on hi-dpi / large
@@ -346,6 +350,7 @@
   for (const s in STAT_LABELS) {
     const btn = document.getElementById("stat-" + s);
     btn.addEventListener("click", () => {
+      if (onlineActive) { net.send({ type: "spendStat", name: s }); return; } // server is authoritative
       if (active === arena) { arena.spendStat(s); updateArenaStatsUI(); if (!statTip.classList.contains("hidden")) showStatTip(btn, s); }
     });
     btn.addEventListener("mouseenter", () => showStatTip(btn, s));
@@ -376,9 +381,13 @@
 
   // -- Arena death menu + spectate: on wreck, pick RESPAWN / SPECTATE / MAIN
   // MENU (no auto-respawn). Spectate follows living bots; NEXT (or N) cycles.
-  document.getElementById("death-respawn-btn").addEventListener("click", openRespawnWeaponSelect);
-  document.getElementById("death-spectate-btn").addEventListener("click", () => { if (active === arena && arena.dead) { arena.spectate = true; arena.spectateCar = null; } });
-  document.getElementById("death-mainmenu-btn").addEventListener("click", quitToMenu);
+  // online: the server owns respawn/loadout, so skip the weapon-picker and ask
+  // it to respawn; offline keeps the local re-pick flow
+  const doRespawn = () => { if (onlineActive) { net.send({ type: "respawn" }); return; } openRespawnWeaponSelect(); };
+  const doMainMenu = () => { if (onlineActive) leaveOnline(); else quitToMenu(); };
+  document.getElementById("death-respawn-btn").addEventListener("click", doRespawn);
+  document.getElementById("death-spectate-btn").addEventListener("click", () => { if (active === arena && arena.dead && !onlineActive) { arena.spectate = true; arena.spectateCar = null; } });
+  document.getElementById("death-mainmenu-btn").addEventListener("click", doMainMenu);
   // spectate NEXT is debounced 150ms so holding N (key-repeat) doesn't swap
   // through every bot in a blink
   let lastSpectateSwap = 0;
@@ -390,8 +399,8 @@
     arena.nextSpectate();
   }
   document.getElementById("spectate-next-btn").addEventListener("click", trySpectateNext);
-  document.getElementById("spectate-respawn-btn").addEventListener("click", openRespawnWeaponSelect);
-  document.getElementById("spectate-menu-btn").addEventListener("click", quitToMenu);
+  document.getElementById("spectate-respawn-btn").addEventListener("click", doRespawn);
+  document.getElementById("spectate-menu-btn").addEventListener("click", doMainMenu);
   function updateDeathUI() {
     const menu = document.getElementById("death-menu");
     const spec = document.getElementById("spectate-ui");
@@ -855,7 +864,7 @@
     }
     else if (e.code === "KeyB") { if (active === game) game.toggleShop(); }
     else if (e.code === "KeyL" && active === arena) { loadoutOpen = !loadoutOpen; lastLoadoutSig = ""; updateLoadoutPanel(); }
-    else if (active === arena && STAT_KEYS[e.code]) { arena.spendStat(STAT_KEYS[e.code]); updateArenaStatsUI(); }
+    else if (active === arena && STAT_KEYS[e.code]) { if (onlineActive) net.send({ type: "spendStat", name: STAT_KEYS[e.code] }); else { arena.spendStat(STAT_KEYS[e.code]); updateArenaStatsUI(); } }
   });
 
   // show virtual controls on touch devices (coarse pointer, or first touch)
@@ -1025,13 +1034,181 @@
   // input sequence reproduces a run exactly (required for replays/validation).
   // Rendering still happens once per animation frame.
   const STEP = 1 / 60;
+
+  // ===== PLAY ONLINE (multiplayer M1) =======================================
+  // Enter online mode: the loop stops simulating and instead streams input +
+  // renders server snapshots (applyOnlineSnapshot rebuilds the arena's entities
+  // from net.snap each frame, so the EXISTING renderer + HUD draw the server's
+  // world).
+  function enterOnline() {
+    onlineActive = true;
+    active = arena;                 // so `active === arena` HUD/cursor checks pass
+    arena.started = true; arena.paused = false;
+    arena.spectate = false;
+    document.getElementById("start-screen").classList.add("hidden");
+    document.getElementById("online-screen").classList.add("hidden");
+    document.getElementById("weapon-select").classList.add("hidden");
+    document.getElementById("arena-loadout").classList.add("hidden"); // online loot is server-side (M1)
+    document.getElementById("loadout-toggle").classList.add("hidden");
+    document.getElementById("arena-guide-btn").classList.remove("hidden");
+    net._carCache.clear();
+    fit();
+  }
+  function leaveOnline(msg) {
+    onlineActive = false;
+    net.close();
+    quitToMenu();
+    const s = document.getElementById("online-status");
+    if (msg && s) { document.getElementById("start-screen").classList.add("hidden"); document.getElementById("online-screen").classList.remove("hidden"); s.textContent = msg; s.className = "err"; }
+  }
+
+  // build the arena's entities from the latest server snapshot (reuses Car for
+  // shape/forward; humans → players[], bots → bots[], everything else plain)
+  function makeNetScrap(x, y, a) {
+    return { x, y, amount: a, maxAmount: 55, dead: false, seed: (x * 13 + y * 7) % 6.283,
+      get scale() { return 0.45 + 0.55 * clamp(this.amount / this.maxAmount, 0, 1); } };
+  }
+  function makeNetBoss(b) {
+    return { kind: b.kind, x: b.x, y: b.y, heading: b.h, radius: b.rad || 72, dead: false,
+      plates: [], coreHp: b.hf, coreMax: 1, hitFlash: 0, slamWind: 0, ringWind: 0, megaWind: 0,
+      overload: b.vul ? 1 : 0, prey: null,
+      hpFrac: () => b.hf, isVulnerable: () => !!b.vul,
+      name: b.kind === "magnet" ? "THE MAGNET" : "JUNK TITAN", tagline: "" };
+  }
+  function applyOnlineSnapshot() {
+    const snap = net.snap; if (!snap) return;
+    const cache = net._carCache, seen = new Set();
+    const players = [], bots = [];
+    let selfCar = null, selfWrap = null;
+    for (const c of snap.cars) {
+      seen.add(c.id);
+      let car = cache.get(c.id);
+      if (!car) { car = new Car(c.x, c.y, c.h); cache.set(c.id, car); }
+      car.x = c.x; car.y = c.y; car.heading = c.h; car.hp = c.hp; car.maxHp = c.mhp;
+      if (c.k === "p") {
+        const isLocal = c.id === net.selfId;
+        const wrap = { car, name: c.n, level: c.lv, hp: c.hp, maxHp: c.mhp, isLocal, dead: !!c.dead,
+          loadout: { weapon1: { type: c.w, tier: 0 }, weapon2: null } };
+        if (isLocal) {
+          wrap.xp = c.xp || 0; wrap.statPoints = c.sp || 0;
+          wrap.stats = c.st || { health: 0, speed: 0, reload: 0, regen: 0 };
+          wrap.slots = c.slots || { armor: false };
+          wrap.railCd = 0; wrap.ramCharge = 0; wrap.ramBoostT = 0; wrap.hookCd = 0;
+          wrap.partDmgReduce = 0; wrap.outOfCombat = 0; wrap.startWeapon = c.w; wrap.baseWeapon = c.w;
+          selfCar = car; selfWrap = wrap;
+        }
+        players.push(wrap);
+      } else {
+        car.name = c.n; car.level = c.lv; car.weapon = c.w; car.deadFlag = false;
+        if (car.hitFlash === undefined) car.hitFlash = 0;
+        bots.push(car);
+      }
+    }
+    for (const id of Array.from(cache.keys())) if (!seen.has(id)) cache.delete(id);
+    arena.players = players;
+    arena.bots = bots;
+    if (selfWrap) arena.localPlayer = selfWrap;
+    arena.bullets = snap.bullets.map((b) => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, radius: b.rail ? 5 : 4, railgun: !!b.rail, shooter: b.sid ? selfCar : null }));
+    arena.mines = snap.mines.map((m) => ({ x: m.x, y: m.y, arm: m.arm ? 1 : 0, dead: false, hp: 3, age: 0, owner: null }));
+    arena.scrap = snap.scrap.map((s) => makeNetScrap(s.x, s.y, s.a));
+    arena.crates = snap.crates.map((c) => ({ x: c.x, y: c.y, r: 16, hp: 2, dead: false, seed: (c.x * 13 + c.y * 7) % 6.283 }));
+    arena.drops = snap.drops.map((d) => ({ x: d.x, y: d.y, dead: false, age: 0, part: { slot: d.slot, type: d.type, tier: d.tier } }));
+    arena.hooks = [];
+    arena.boss = snap.boss ? makeNetBoss(snap.boss) : null;
+    const lb = snap.cars.map((c) => ({ car: cache.get(c.id), name: c.n, level: c.lv, xp: c.xp || 0, isPlayer: c.id === net.selfId, dead: !!c.dead }));
+    lb.sort((a, b) => (b.level - a.level) || (b.xp - a.xp));
+    arena.leaderboard = lb;
+    const lead = lb.find((e) => !e.dead);
+    arena.leaderCar = lead ? lead.car : null;
+    if (selfCar) {
+      arena.cam.x = clamp(selfCar.x, VIEW.w / 2, ARENA.w - VIEW.w / 2);
+      arena.cam.y = clamp(selfCar.y, VIEW.h / 2, ARENA.h - VIEW.h / 2);
+    }
+  }
+  function onlineFrame() {
+    const inp = arena.input;
+    const selfCar = arena.localPlayer && arena.localPlayer.car;
+    const d = readDrive(inp, selfCar ? selfCar.heading : 0);
+    const aim = arena.mouseWorldAngle();
+    if (window.__autodrive) { d.throttle = window.__autodrive.t; d.steer = window.__autodrive.s; } // DEV-ONLY separation hook
+    net.sendInput({ throttle: d.throttle, steer: d.steer, handbrake: !!d.handbrake,
+      fire: !!inp.fire, mouseDown: !!inp.mouseDown, hookHeld: !!inp.hookHeld,
+      ability: !!inp.touchAbility1, autoFire: !!inp.autoFire,
+      aim: (aim === null || aim === undefined) ? undefined : aim });
+    applyOnlineSnapshot();
+    arena.renderer.draw();
+    updateArenaStatsUI();
+    updateDeathUI();
+    updateAbilityButtons();
+    arena.layoutEditing = false;
+    updateCursor();
+  }
+
+  // join-form wiring
+  (function initOnlineUI() {
+    const scr = document.getElementById("online-screen");
+    const urlEl = document.getElementById("online-url");
+    const roomEl = document.getElementById("online-room");
+    const nameEl = document.getElementById("online-name");
+    const statusEl = document.getElementById("online-status");
+    if (!scr || !urlEl) return; // headless/no-DOM guard
+    const params = (typeof URLSearchParams !== "undefined")
+      ? new URLSearchParams((typeof location !== "undefined" && location.search) || "")
+      : { get: () => null };
+    try {
+      urlEl.value = params.get("server") || localStorage.getItem("sd_srv") || "";
+      roomEl.value = params.get("room") || localStorage.getItem("sd_room") || "";
+      nameEl.value = localStorage.getItem("sd_name") || "";
+    } catch (_) {}
+    const setStatus = (t, cls) => { if (statusEl) { statusEl.textContent = t || ""; statusEl.className = cls || ""; } };
+    const openOnline = () => { document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); setStatus("", ""); };
+    const doJoin = () => {
+      let url = (urlEl.value || "").trim();
+      const room = (roomEl.value || "").trim();
+      const name = (nameEl.value || "").trim() || "PLAYER";
+      if (!url) return setStatus("enter a server address", "err");
+      if (!/^wss?:\/\//i.test(url)) url = "wss://" + url; // bare host → wss
+      try { localStorage.setItem("sd_srv", url); localStorage.setItem("sd_room", room); localStorage.setItem("sd_name", name); } catch (_) {}
+      arena.playerName = name;
+      setStatus("connecting…", "");
+      net.connect(url, room, name);
+    };
+    net.onState = (state, reason) => {
+      if (state === "connecting") setStatus("connecting…", "");
+      else if (state === "joined") enterOnline();
+      else if (state === "rejected") setStatus("rejected: " + reason, "err");
+      else if (state === "error") setStatus(reason || "connection failed", "err");
+      else if (state === "closed" && onlineActive) leaveOnline("connection lost");
+      else if (state === "closed") setStatus("connection closed", "err");
+    };
+    const onlineBtn = document.getElementById("start-online-btn");
+    if (onlineBtn) onlineBtn.addEventListener("click", () => { game.audio.unlock(); openOnline(); });
+    const joinBtn = document.getElementById("online-join-btn");
+    if (joinBtn) joinBtn.addEventListener("click", doJoin);
+    if (nameEl) nameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doJoin(); });
+    const backBtn = document.getElementById("online-back-btn");
+    if (backBtn) backBtn.addEventListener("click", () => { net.close(); scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden"); });
+    // dev/preview: ?connect=ws://host&room=CODE&name=X → auto-join on load
+    const auto = params.get("connect");
+    if (auto) {
+      urlEl.value = auto; roomEl.value = params.get("room") || ""; nameEl.value = params.get("name") || "PLAYER";
+      const dv = params.get("drive"); // DEV-ONLY: "t,s" constant throttle,steer for screenshots
+      if (dv) { const p = dv.split(",").map(Number); window.__autodrive = { t: p[0] || 0, s: p[1] || 0 }; }
+      setTimeout(doJoin, 60);
+    }
+  })();
+  // ===== end PLAY ONLINE ====================================================
+
   let last = performance.now();
   let acc = 0;
   function loop(now) {
     let frame = (now - last) / 1000;
     last = now;
     if (frame > 0.25) frame = 0.25; // after a stall, skip time rather than spiral
-    if (active) {
+    if (onlineActive) {
+      acc = 0;
+      onlineFrame(); // stream input + render server snapshots (no local sim)
+    } else if (active) {
       acc += frame;
       while (acc >= STEP) { active.update(STEP); acc -= STEP; }
       active.renderer.draw();

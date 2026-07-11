@@ -48,7 +48,7 @@ handleOrientation()/begin() and share one Input + AudioSys. `readDrive()` in
 input.js is the shared keyboard/joystick→car-controls helper both use.
 
 Load order matters (classic scripts, see index.html):
-`theme → utils → rng → input → audio → particles → projectile → scrap → car →
+`theme → net → utils → rng → input → audio → particles → projectile → scrap → car →
 player → enemy → waves → render → ui → upgrades → game →
 arena/arena-parts → arena/arena-player → arena/arena-render → arena/arena-bot →
 arena/arena-boss → arena/arena → main`
@@ -539,6 +539,38 @@ cascade bug that text-only testing never would.
   run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
   input, and RENDER server snapshots (stop local simming); then M2 interpolation.
   The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-07-11** — MULTIPLAYER M1: CLIENT ONLINE MODE (the browser plays the
+  authoritative server's world; closes the M1 loop). `js/net.js` `NetClient`
+  opens a WebSocket, JOINs a room (`{type:"join",room,name}`), streams local
+  INPUT up each frame and stashes the latest world SNAPSHOT; `onState`
+  callback drives the join UI. Start screen gained a red PLAY ONLINE button →
+  `#online-screen` join form (server address / room code / name, remembered in
+  localStorage). While online the client STOPS simulating: `onlineFrame()`
+  replaces the local `active.update` loop — it sends input (`readDrive` +
+  `mouseWorldAngle` aim), then `applyOnlineSnapshot()` rebuilds `arena`'s
+  entities from `net.snap` (Cars cached by netId; humans → `players[]` with
+  the local one blue + others teal/named via the M0 `drawPlayerCar` path, bots
+  → `bots[]`, plus bullets/mines/scrap/crates/drops/boss/leaderboard/camera)
+  so the EXISTING renderer + HUD draw the server's world with no renderer
+  changes. Spend-stat + respawn + MAIN MENU route to the server when
+  `onlineActive` (`{type:"spendStat"|"respawn"}`; server got a `spendStat`
+  handler); offline paths untouched. Load order: `net.js` right after
+  `theme.js`. Server snapshot now includes the boss radius + the self player's
+  xp/statPoints/stats/slots. DEV/preview hooks (match the existing `?screen`/
+  `?mode` convention): `?connect=ws://host&room=CODE&name=X` auto-joins on
+  load, `&drive=t,s` feeds a constant throttle/steer for screenshot testing.
+  New `tools/shot-live.js` — a REAL-TIME (CDP, non-virtual-time) headless
+  screenshot so realtime ws streams can be captured (the `--virtual-time-
+  budget` `shot.js` can't wait for a live socket). VERIFIED end-to-end: local
+  gated server (`ROOM_CODE=TEST`) + two headless browsers both render one
+  shared world — each sees the other human as a distinct teal named car
+  alongside red bots (RUSTBUCKET L10 / OVERDRIVE L3), the roaming Magnet boss,
+  loot chips, minimap + live leaderboard; server logged "2 online"; the
+  spendStat/respawn/input messages keep it ticking without crashing. Full
+  6-suite regression green. NEXT (M2): client-side interpolation + input
+  prediction (snapshots are ~20Hz, currently rendered raw = slight stutter);
+  online loot/loadout UI (equip is server-side, panel hidden in M1);
+  reconnect/room-list polish.
 - **2026-07-11** — MULTIPLAYER M0 steps 2-4: N-PLAYER SIM (offline; still one
   local human, but the sim now carries N). Every per-human method takes an
   optional `player = this.localPlayer` arg (so all existing zero-arg call sites
