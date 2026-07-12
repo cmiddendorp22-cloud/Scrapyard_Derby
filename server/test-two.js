@@ -7,7 +7,7 @@ function client(name, steer, cb) {
   const ws = new WebSocket("ws://localhost:8090");
   let id = null, last = null;
   ws.on("open", () => {
-    ws.send(JSON.stringify({ type: "join", room: process.env.ROOM || "TEST", name }));
+    ws.send(JSON.stringify(process.env.ROOM ? { type: "join", room: process.env.ROOM, name } : { type: "quickplay", name }));
     setInterval(() => ws.readyState === 1 && ws.send(JSON.stringify({ type: "input", throttle: 1, steer, fire: false })), 33);
   });
   ws.on("message", (d) => { const m = JSON.parse(d); if (m.type === "welcome") id = m.id; if (m.type === "snap") last = m; });

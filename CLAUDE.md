@@ -539,6 +539,39 @@ cascade bug that text-only testing never would.
   run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
   input, and RENDER server snapshots (stop local simming); then M2 interpolation.
   The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-07-11** — MULTIPLAYER: MULTI-ROOM server + matchmaking + invite codes
+  (agar/diep-style; user: "press play and join a server, plus invite codes for
+  friends, max player count, free + external, low lag"). The server now hosts
+  MANY `ArenaGame` worlds (one per room) in ONE process. Three SEAT messages
+  replace the old single-room join: `{quickplay}` matchmakes into a public room
+  with open slots (fills fullest-not-full, else spins a new one) = the PLAY
+  button; `{create, maxPlayers}` opens a PRIVATE room and returns a 5-char
+  INVITE CODE; `{join, room}` joins by code. Per-room `maxPlayers` (default 12),
+  `MAX_ROOMS` cap (200), and empty non-permanent rooms reaped ~30s after they
+  clear. KEY GOTCHA handled: the sim uses a GLOBAL rng pointer (`setSimRandom`),
+  so the tick loop re-aims it at each room's `rng` before that room updates —
+  worlds stay independent + deterministic per seed. Snapshots broadcast
+  per-room. CLIENT: PLAY ONLINE screen redesigned — NAME + SERVER, then PLAY
+  (QUICK MATCH) / CREATE PRIVATE GAME (shows the invite code + START) / JOIN
+  WITH CODE; `NetClient.connect(url, seatMsg)` generalized, welcome carries the
+  room code. SECURITY (public-facing): names clamped to 10 (user), private
+  rooms gated by code + optional `SERVER_PASSWORD` lock, per-IP room-creation
+  rate limit, `MAX_ROOMS`/`MAX_PER_IP`, and a message + per-room-tick try/catch
+  so one bad message or a single room's error can't crash the shared process
+  (fixed a latent TDZ crash: `cleanup()` referenced `joinTimer` before its
+  `const` init on the MAX_PER_IP path → now a hoisted `let`). low-lag netcode is
+  the existing M1-M3 (prediction/interp) — hosting/region is the only remaining
+  lag factor (still host-agnostic: Node image runs on any provider; a free
+  external host is the next decision). Gated by a multi-room integration test
+  (quickplay puts 2 players in ONE room + they see each other; create → new
+  private code + honored maxPlayers; join-by-code → same room; ROOM ISOLATION:
+  a player never sees another room's cars; unknown code rejected; 10-char name
+  clamp — 11/11) + full 6-suite regression + live screenshots (quickplay renders
+  a shared world; create shows INVITE CODE K6XBV). Dev hooks: `?connect=ws://h&name=X`
+  auto-quickplays, `&room=CODE`/`&create=1` for join/create, `?online=1` opens the
+  form. NEXT: pick a free always-on external host (Cloudflare Durable Objects for
+  global low-lag + free, or Node on a free tier) + deploy; a public room browser;
+  cross-instance matchmaking.
 - **2026-07-11** — SECURITY pass (input handling + text boxes + web hardening,
   user request). SERVER (the trust boundary — every field off the wire is
   untrusted): `sanitizeName` strips C0/C1 controls + zero-width + bidi-override

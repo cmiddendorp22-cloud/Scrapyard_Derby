@@ -1238,8 +1238,8 @@
     // client-side input sanitizing (defense-in-depth; the server re-validates
     // everything authoritatively). Mirrors the server's rules so the UI shows
     // the same name the server will.
-    const cleanName = (s) => String(s || "").replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "").replace(/\s+/g, " ").trim().slice(0, 14);
-    const cleanRoom = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16);
+    const cleanName = (s) => String(s || "").replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "").replace(/\s+/g, " ").trim().slice(0, 10);
+    const cleanRoom = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
     // only ws:// or wss:// may reach the WebSocket ctor; map http(s) for
     // convenience and reject anything exotic (javascript:, data:, file:, …)
     const normalizeUrl = (raw) => {
@@ -1256,21 +1256,50 @@
       }
       return { url: u };
     };
-    const doJoin = () => {
+    const inviteEl = document.getElementById("online-invite");
+    let pendingCreate = false;
+    // resolve URL + name, persist, then connect with the given seat message.
+    // `build(name)` returns the seat message, or null after setting its own error.
+    const connectWith = (build) => {
       const parsed = normalizeUrl(urlEl.value);
       if (parsed.err) return setStatus(parsed.err, "err");
       const url = parsed.url;
-      const room = cleanRoom(roomEl.value);
       const name = cleanName(nameEl.value) || "PLAYER";
-      urlEl.value = url; roomEl.value = room; nameEl.value = name; // reflect the cleaned values
-      try { localStorage.setItem("sd_srv", url); localStorage.setItem("sd_room", room); localStorage.setItem("sd_name", name); } catch (_) {}
+      urlEl.value = url; nameEl.value = name;
+      try { localStorage.setItem("sd_srv", url); localStorage.setItem("sd_name", name); } catch (_) {}
       arena.playerName = name;
+      const seat = build(name);
+      if (!seat) return;
+      if (inviteEl) inviteEl.classList.add("hidden");
       setStatus("connecting…", "");
-      net.connect(url, room, name);
+      net.connect(url, seat);
+    };
+    const doPlay = () => { pendingCreate = false; connectWith((name) => ({ type: "quickplay", name })); };
+    const doCreate = () => { pendingCreate = true; connectWith((name) => ({ type: "create", name, maxPlayers: 12 })); };
+    const doJoin = () => { pendingCreate = false; connectWith((name) => {
+      const room = cleanRoom(roomEl.value); roomEl.value = room;
+      if (room.length < 4) { setStatus("enter a valid join code", "err"); return null; }
+      try { localStorage.setItem("sd_room", room); } catch (_) {}
+      return { type: "join", room, name };
+    }); };
+    // when you CREATE a private room, show the invite code + a START button so
+    // the host can share it before dropping in (code is server-generated + safe;
+    // rendered via textContent, never innerHTML)
+    const showInvite = (code) => {
+      if (!inviteEl) { enterOnline(); return; }
+      document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); // ensure the code is visible
+      inviteEl.textContent = "";
+      const lbl = document.createElement("div"); lbl.className = "invite-code"; lbl.textContent = "INVITE CODE:  " + code;
+      const sub = document.createElement("div"); sub.className = "invite-sub"; sub.textContent = "share it with friends, then start";
+      const go = document.createElement("button"); go.textContent = "START GAME";
+      go.addEventListener("click", () => { inviteEl.classList.add("hidden"); enterOnline(); });
+      inviteEl.appendChild(lbl); inviteEl.appendChild(sub); inviteEl.appendChild(go);
+      inviteEl.classList.remove("hidden");
+      setStatus("", "");
     };
     net.onState = (state, reason) => {
       if (state === "connecting") setStatus("connecting…", "");
-      else if (state === "joined") enterOnline();
+      else if (state === "joined") { if (pendingCreate && net.roomCode) { pendingCreate = false; showInvite(net.roomCode); } else enterOnline(); }
       else if (state === "rejected") setStatus("rejected: " + reason, "err");
       else if (state === "error") setStatus(reason || "connection failed", "err");
       else if (state === "closed" && onlineActive) leaveOnline("connection lost");
@@ -1278,19 +1307,23 @@
     };
     const onlineBtn = document.getElementById("start-online-btn");
     if (onlineBtn) onlineBtn.addEventListener("click", () => { game.audio.unlock(); openOnline(); });
-    const joinBtn = document.getElementById("online-join-btn");
-    if (joinBtn) joinBtn.addEventListener("click", doJoin);
-    if (nameEl) nameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doJoin(); });
+    const bind = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener("click", fn); };
+    bind("online-play-btn", doPlay);
+    bind("online-create-btn", doCreate);
+    bind("online-join-btn", doJoin);
+    if (roomEl) roomEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doJoin(); });
     const backBtn = document.getElementById("online-back-btn");
-    if (backBtn) backBtn.addEventListener("click", () => { net.close(); scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden"); });
-    // dev/preview: ?connect=ws://host&room=CODE&name=X → auto-join on load
+    if (backBtn) backBtn.addEventListener("click", () => { net.close(); if (inviteEl) inviteEl.classList.add("hidden"); scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden"); });
+    // dev/preview: ?connect=ws://host[&room=CODE][&name=X] → auto-seat on load
+    // (room present → join that code; absent → quick match)
     const auto = params.get("connect");
     if (auto) {
       urlEl.value = auto; roomEl.value = params.get("room") || ""; nameEl.value = params.get("name") || "PLAYER";
       const dv = params.get("drive"); // DEV-ONLY: "t,s" constant throttle,steer for screenshots
       if (dv) { const p = dv.split(",").map(Number); window.__autodrive = { t: p[0] || 0, s: p[1] || 0 }; }
-      setTimeout(doJoin, 60);
-    }
+      const seatFn = params.get("create") ? doCreate : (params.get("room") ? doJoin : doPlay);
+      setTimeout(seatFn, 60);
+    } else if (params.get("online")) { openOnline(); } // preview the join screen
   })();
   // ===== end PLAY ONLINE ====================================================
 

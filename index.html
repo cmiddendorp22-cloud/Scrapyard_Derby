@@ -34,21 +34,24 @@
   <div id="online-screen" class="overlay hidden">
     <div class="menu-panel">
       <h1>PLAY ONLINE</h1>
-      <p>Enter your friend's server address + room code.</p>
-      <div class="options-row">
-        <label for="online-url">SERVER</label>
-        <input type="text" id="online-url" placeholder="wss://something.trycloudflare.com" autocomplete="off" spellcheck="false" maxlength="200" inputmode="url">
-      </div>
-      <div class="options-row">
-        <label for="online-room">ROOM CODE</label>
-        <input type="text" id="online-room" placeholder="e.g. K7M2P" autocomplete="off" spellcheck="false" maxlength="16">
-      </div>
       <div class="options-row">
         <label for="online-name">YOUR NAME</label>
-        <input type="text" id="online-name" placeholder="YOU" autocomplete="off" spellcheck="false" maxlength="14">
+        <input type="text" id="online-name" placeholder="YOU" autocomplete="off" spellcheck="false" maxlength="10">
       </div>
+      <div class="options-row">
+        <label for="online-url">SERVER</label>
+        <input type="text" id="online-url" placeholder="wss://your-server (or ws://localhost:8090)" autocomplete="off" spellcheck="false" maxlength="200" inputmode="url">
+      </div>
+      <button id="online-play-btn">PLAY (QUICK MATCH)</button>
+      <div class="online-sep">or play with friends</div>
+      <button id="online-create-btn">CREATE PRIVATE GAME</button>
+      <div class="options-row">
+        <label for="online-room">JOIN CODE</label>
+        <input type="text" id="online-room" placeholder="e.g. K7M2P" autocomplete="off" spellcheck="false" maxlength="5">
+      </div>
+      <button id="online-join-btn">JOIN WITH CODE</button>
+      <div id="online-invite" class="hidden"></div>
       <div id="online-status"></div>
-      <button id="online-join-btn">JOIN</button>
       <button id="online-back-btn">BACK</button>
     </div>
   </div>

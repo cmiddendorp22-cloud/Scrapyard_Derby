@@ -9,7 +9,7 @@ let selfId = null, snaps = 0, startX = null, startY = null, lastSnap = null;
 
 ws.on("open", () => {
   console.log("connected to", url);
-  ws.send(JSON.stringify({ type: "join", room: process.env.ROOM || "TEST", name: "TESTER" }));
+  ws.send(JSON.stringify(process.env.ROOM ? { type: "join", room: process.env.ROOM, name: "TESTER" } : { type: "quickplay", name: "TESTER" }));
   // stream "drive + fire" 30x/sec (server ignores input until we've joined)
   const iv = setInterval(() => {
     if (ws.readyState !== 1) return clearInterval(iv);
