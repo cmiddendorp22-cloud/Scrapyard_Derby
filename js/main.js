@@ -1225,11 +1225,15 @@
     const nameEl = document.getElementById("online-name");
     const statusEl = document.getElementById("online-status");
     if (!scr || !urlEl) return; // headless/no-DOM guard
+    // once the server is deployed, set this to its wss:// URL — then PLAY needs
+    // no typing (the field prefills it and the SERVER row can be hidden).
+    const DEFAULT_SERVER = "";
     const params = (typeof URLSearchParams !== "undefined")
       ? new URLSearchParams((typeof location !== "undefined" && location.search) || "")
       : { get: () => null };
     try {
-      urlEl.value = params.get("server") || localStorage.getItem("sd_srv") || "";
+      urlEl.value = params.get("server") || localStorage.getItem("sd_srv") || DEFAULT_SERVER || "";
+      if (DEFAULT_SERVER) urlEl.closest(".options-row").style.display = "none"; // hide the server row once baked
       roomEl.value = params.get("room") || localStorage.getItem("sd_room") || "";
       nameEl.value = localStorage.getItem("sd_name") || "";
     } catch (_) {}

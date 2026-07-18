@@ -121,6 +121,26 @@ ROOM=TEST node test-client.js    # one ws client joins + drives + gets snapshots
 ROOM=TEST node test-two.js       # two clients see each other's cars
 ```
 
+## Deploy free to Render (Node, no credit card)
+
+The repo has a `render.yaml` blueprint, so this is near one-click:
+
+1. Push the repo to GitHub (already done).
+2. Go to **render.com**, sign up (free, no card), **New → Blueprint**, pick this repo.
+   Render reads `render.yaml` and creates the web service (rootDir `server`,
+   `npm install` + `node server.js`, health check `/`). Deploy.
+3. You get a URL like `https://scrapyard-arena-server.onrender.com`. The client
+   uses the **`wss://`** form of it (Render terminates TLS at its edge).
+4. In the game's **PLAY ONLINE** screen, put `wss://<your-app>.onrender.com` in
+   SERVER, then **PLAY**. (Or bake it in: set `DEFAULT_SERVER` in `js/main.js`
+   to that URL and the field prefills + hides.)
+
+**Caveat — the free tier sleeps** after ~15 min idle (next connect cold-starts
+~30-60s). Keep it warm for free by pinging the health URL every ~10 min from a
+free scheduler (e.g. **cron-job.org** → `GET https://<your-app>.onrender.com/`).
+That's the trade for $0/no-card on Node; an always-on box (small paid tier, or
+Cloudflare Durable Objects) removes it later.
+
 ## Hosting on a real always-on host (bigger provider)
 
 The Dockerfile at the repo root builds a host-agnostic server image (Railway /

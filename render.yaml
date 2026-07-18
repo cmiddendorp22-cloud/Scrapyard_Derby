@@ -1,0 +1,28 @@
+# Render Blueprint — deploys the Scrapyard Arena multiplayer server (Node + ws).
+# Free tier, no credit card. Render checks out the whole repo but runs from
+# server/ (rootDir), so sim-host can still read ../index.html + ../js at runtime.
+#
+# Deploy: push this file, then on render.com → New → Blueprint → pick this repo.
+# It gives you a URL like https://scrapyard-arena.onrender.com — the client
+# connects to the wss:// form of that (Render terminates TLS at its edge).
+#
+# NOTE: the free web service SLEEPS after ~15 min with no traffic (cold start
+# ~30-60s on the next connect). Keep it warm for free by pinging the health URL
+# every ~10 min from a free scheduler (e.g. cron-job.org → GET https://<app>/).
+services:
+  - type: web
+    name: scrapyard-arena-server
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"          # Render runs behind a proxy — read the real client IP
+      # - key: MAX_PLAYERS   # uncomment to tune the per-room cap
+      #   value: "12"
