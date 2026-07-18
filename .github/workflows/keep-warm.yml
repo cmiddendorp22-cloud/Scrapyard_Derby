@@ -1,0 +1,37 @@
+# Keeps the free Render server awake by pinging its health URL every ~10 min
+# (the free tier sleeps after ~15 min idle; a sleeping server cold-starts
+# ~30-60s on the next player's connect).
+#
+# SETUP (one time, after the Render deploy): repo Settings → Secrets and
+# variables → Actions → Variables → New repository variable:
+#   name:  KEEPALIVE_URL
+#   value: https://<your-app>.onrender.com/
+# Until that variable exists the job just no-ops (so this workflow is safe to
+# merge before the server is deployed).
+#
+# NOTES: GitHub cron isn't exact (runs can drift a few minutes — fine here,
+# we ping well inside the 15-min sleep window), and GitHub auto-disables
+# scheduled workflows after ~60 days with no repo activity — any push
+# re-enables it, or press "Enable" in the Actions tab.
+
+name: keep-warm
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes
+  workflow_dispatch: {}       # manual "Run workflow" button for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping server health URL
+        env:
+          URL: ${{ vars.KEEPALIVE_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "KEEPALIVE_URL repo variable not set - skipping (see comments in this workflow)."
+            exit 0
+          fi
+          # --max-time bounds a cold-start hang; a failed ping still WAKES the
+          # server, so don't fail the job over flaky responses
+          curl -sS --max-time 40 "$URL" || echo "ping failed (server may be cold-starting - it will be awake shortly)"

@@ -136,10 +136,15 @@ The repo has a `render.yaml` blueprint, so this is near one-click:
    to that URL and the field prefills + hides.)
 
 **Caveat — the free tier sleeps** after ~15 min idle (next connect cold-starts
-~30-60s). Keep it warm for free by pinging the health URL every ~10 min from a
-free scheduler (e.g. **cron-job.org** → `GET https://<your-app>.onrender.com/`).
-That's the trade for $0/no-card on Node; an always-on box (small paid tier, or
-Cloudflare Durable Objects) removes it later.
+~30-60s). The repo ships a keep-warm GitHub Action
+(`.github/workflows/keep-warm.yml`) that pings the health URL every 10 min —
+after deploying, add a repo **Actions variable** `KEEPALIVE_URL =
+https://<your-app>.onrender.com/` (repo Settings → Secrets and variables →
+Actions → Variables) and it takes over; until then it no-ops. GitHub disables
+scheduled workflows after ~60 days of repo inactivity (any push, or the
+Actions tab's Enable button, revives it). That's the trade for $0/no-card on
+Node; an always-on box (small paid tier, or Cloudflare Durable Objects)
+removes it later.
 
 ## Hosting on a real always-on host (bigger provider)
 
