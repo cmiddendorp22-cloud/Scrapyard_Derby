@@ -1225,15 +1225,20 @@
     const nameEl = document.getElementById("online-name");
     const statusEl = document.getElementById("online-status");
     if (!scr || !urlEl) return; // headless/no-DOM guard
-    // once the server is deployed, set this to its wss:// URL — then PLAY needs
-    // no typing (the field prefills it and the SERVER row can be hidden).
-    const DEFAULT_SERVER = "";
+    // the live server — PLAY needs no typing; the SERVER field stays tucked
+    // behind "advanced" unless a saved/URL override exists.
+    const DEFAULT_SERVER = "wss://scrapyard-derby.onrender.com";
+    const urlRow = document.getElementById("online-url-row");
+    const advBtn = document.getElementById("online-advanced-btn");
     const params = (typeof URLSearchParams !== "undefined")
       ? new URLSearchParams((typeof location !== "undefined" && location.search) || "")
       : { get: () => null };
     try {
-      urlEl.value = params.get("server") || localStorage.getItem("sd_srv") || DEFAULT_SERVER || "";
-      if (DEFAULT_SERVER) urlEl.closest(".options-row").style.display = "none"; // hide the server row once baked
+      const saved = localStorage.getItem("sd_srv");
+      const override = params.get("server") || (saved && saved !== DEFAULT_SERVER ? saved : "");
+      urlEl.value = override || DEFAULT_SERVER;
+      if (override && urlRow) urlRow.classList.remove("hidden"); // a real override → show it, skip "advanced"
+      else if (advBtn) advBtn.addEventListener("click", () => { urlRow.classList.remove("hidden"); advBtn.classList.add("hidden"); urlEl.focus(); });
       roomEl.value = params.get("room") || localStorage.getItem("sd_room") || "";
       nameEl.value = localStorage.getItem("sd_name") || "";
     } catch (_) {}
