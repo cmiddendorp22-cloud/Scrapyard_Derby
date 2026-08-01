@@ -907,6 +907,11 @@ body.touch-mode #spectate-ui { top: 8px; }
   border: 1px solid var(--accent); border-radius: 8px; background: rgba(0,0,0,0.25);
 }
 #online-invite.hidden { display: none; }
+/* transparent to the panel's flex layout when visible (children act as direct
+   flex items, keeping the gap spacing) so wrapping the form for show/hide
+   doesn't disturb its look; a real box only while explicitly hidden */
+#online-form { display: contents; }
+#online-form.hidden { display: none; }
 #online-url-row.hidden { display: none; }
 #online-advanced-btn.hidden { display: none; }
 .overlay .menu-panel button.link-btn {
@@ -1190,4 +1195,19 @@ button.option-toggle:hover { filter: brightness(1.1); }
   #touch-ability2 { width: 54px; height: 54px; right: 178px; bottom: 22px; }
   /* side SHOP button: up and compact, clear of the FIRE/DRIFT cluster */
   #shop-toggle { top: 20%; transform: none; padding: 8px 10px; font-size: 11px; }
+  /* PLAY ONLINE: this screen has more rows than a typical menu (2 buttons +
+     2 fields + a divider + advanced-toggle), so it needs its own tighter
+     panel spacing on top of the generic compaction above to fit without
+     scrolling on a short landscape phone. */
+  #online-screen .menu-panel { gap: 3px; padding: 8px 24px 10px; }
+  #online-screen h1 { margin: 0 0 2px; font-size: 22px; }
+  #online-screen .options-row { margin-bottom: 0; gap: 6px; }
+  #online-screen .options-row input[type="text"] { padding: 5px 10px; }
+  #online-screen button { margin-top: 4px; padding: 7px 18px; font-size: 12px; }
+  .online-sep { margin: 2px 0 0; font-size: 9px; }
+  .link-btn { margin: 0 auto 0; font-size: 10px; }
+  #online-invite { padding: 6px; margin: 0; }
+  #online-invite .invite-code { font-size: 15px; letter-spacing: 2px; }
+  #online-invite .invite-sub { font-size: 9px; margin: 1px 0 4px; }
+  #online-status { min-height: 12px; font-size: 10px; }
 }

@@ -1243,7 +1243,13 @@
       nameEl.value = localStorage.getItem("sd_name") || "";
     } catch (_) {}
     const setStatus = (t, cls) => { if (statusEl) { statusEl.textContent = t || ""; statusEl.className = cls || ""; } };
-    const openOnline = () => { document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); setStatus("", ""); };
+    const formEl = document.getElementById("online-form");
+    const inviteEl = document.getElementById("online-invite");
+    const openOnline = () => {
+      document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); setStatus("", "");
+      if (formEl) formEl.classList.remove("hidden"); // reset from any prior CREATE (invite-only) state
+      if (inviteEl) inviteEl.classList.add("hidden");
+    };
     // client-side input sanitizing (defense-in-depth; the server re-validates
     // everything authoritatively). Mirrors the server's rules so the UI shows
     // the same name the server will.
@@ -1265,7 +1271,6 @@
       }
       return { url: u };
     };
-    const inviteEl = document.getElementById("online-invite");
     let pendingCreate = false;
     // resolve URL + name, persist, then connect with the given seat message.
     // `build(name)` returns the seat message, or null after setting its own error.
@@ -1297,6 +1302,7 @@
     const showInvite = (code) => {
       if (!inviteEl) { enterOnline(); return; }
       document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); // ensure the code is visible
+      if (formEl) formEl.classList.add("hidden"); // the host is committed now — drop PLAY/CREATE/JOIN so the code fits without scrolling
       inviteEl.textContent = "";
       const lbl = document.createElement("div"); lbl.className = "invite-code"; lbl.textContent = "INVITE CODE:  " + code;
       const sub = document.createElement("div"); sub.className = "invite-sub"; sub.textContent = "share it with friends, then start";
@@ -1322,7 +1328,7 @@
     bind("online-join-btn", doJoin);
     if (roomEl) roomEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doJoin(); });
     const backBtn = document.getElementById("online-back-btn");
-    if (backBtn) backBtn.addEventListener("click", () => { net.close(); if (inviteEl) inviteEl.classList.add("hidden"); scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden"); });
+    if (backBtn) backBtn.addEventListener("click", () => { net.close(); if (inviteEl) inviteEl.classList.add("hidden"); if (formEl) formEl.classList.remove("hidden"); scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden"); });
     // dev/preview: ?connect=ws://host[&room=CODE][&name=X] → auto-seat on load
     // (room present → join that code; absent → quick match)
     const auto = params.get("connect");
