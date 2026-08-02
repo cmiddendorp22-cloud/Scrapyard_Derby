@@ -1272,6 +1272,7 @@
       return { url: u };
     };
     let pendingCreate = false;
+    let connectingToSaved = false; // true when this attempt is using a REMEMBERED non-default URL
     // resolve URL + name, persist, then connect with the given seat message.
     // `build(name)` returns the seat message, or null after setting its own error.
     const connectWith = (build) => {
@@ -1285,8 +1286,22 @@
       const seat = build(name);
       if (!seat) return;
       if (inviteEl) inviteEl.classList.add("hidden");
+      // a saved (or url-param) address that isn't the live default gets ONE
+      // chance; if it can't be reached we fall back automatically (see
+      // net.onState below) instead of silently re-showing a dead address
+      // forever — a stale self-host/test URL from a past session shouldn't
+      // permanently break the primary PLAY flow.
+      connectingToSaved = url !== DEFAULT_SERVER;
       setStatus("connecting…", "");
       net.connect(url, seat);
+    };
+    // undo a bad saved/typed server: clear storage, restore the live default,
+    // re-hide the field behind "advanced" so PLAY works again with one click
+    const resetToDefaultServer = () => {
+      try { localStorage.removeItem("sd_srv"); } catch (_) {}
+      urlEl.value = DEFAULT_SERVER;
+      if (urlRow) urlRow.classList.add("hidden");
+      if (advBtn) advBtn.classList.remove("hidden");
     };
     const doPlay = () => { pendingCreate = false; connectWith((name) => ({ type: "quickplay", name })); };
     const doCreate = () => { pendingCreate = true; connectWith((name) => ({ type: "create", name, maxPlayers: 12 })); };
@@ -1314,9 +1329,15 @@
     };
     net.onState = (state, reason) => {
       if (state === "connecting") setStatus("connecting…", "");
-      else if (state === "joined") { if (pendingCreate && net.roomCode) { pendingCreate = false; showInvite(net.roomCode); } else enterOnline(); }
+      else if (state === "joined") { connectingToSaved = false; if (pendingCreate && net.roomCode) { pendingCreate = false; showInvite(net.roomCode); } else enterOnline(); }
       else if (state === "rejected") setStatus("rejected: " + reason, "err");
-      else if (state === "error") setStatus(reason || "connection failed", "err");
+      else if (state === "error") {
+        if (connectingToSaved) { // a remembered/custom address didn't answer — heal back to the live default
+          connectingToSaved = false;
+          resetToDefaultServer();
+          setStatus("your saved server didn't respond, so it's been reset to the default — press PLAY again", "err");
+        } else setStatus(reason || "connection failed", "err");
+      }
       else if (state === "closed" && onlineActive) leaveOnline("connection lost");
       else if (state === "closed") setStatus("connection closed", "err");
     };
