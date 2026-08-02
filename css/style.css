@@ -905,16 +905,18 @@ body.touch-mode #spectate-ui { top: 8px; }
 /* transparent to the panel's flex layout when visible (children act as direct
    flex items, keeping the gap spacing) so wrapping a section for show/hide
    doesn't disturb its look; a real box only while explicitly hidden.
-   #online-form = the whole form (hidden once an invite code is shown);
-   #online-friends = CREATE/JOIN, tucked away by default like "advanced" so
-   the default view is just NAME + PLAY (minimal, one hero action). */
-#online-form { display: contents; }
-#online-form.hidden { display: none; }
-#online-friends { display: contents; }
-#online-friends.hidden { display: none; }
+   #online-picker = PLAY/CREATE/JOIN/advanced (the default view); each
+   #online-step-* asks for only what that one action needs, entered by
+   clicking its picker button. #online-name-row is ONE shared field relocated
+   (real DOM move, not a copy) into whichever step is active, since name is
+   asked for last across all three flows. */
+#online-picker { display: contents; }
+#online-picker.hidden { display: none; }
+#online-step-play, #online-step-create, #online-step-join { display: contents; }
+#online-step-play.hidden, #online-step-create.hidden, #online-step-join.hidden { display: none; }
+#online-name-row.hidden { display: none; }
 #online-url-row.hidden { display: none; }
 #online-advanced-btn.hidden { display: none; }
-#online-friends-btn.hidden { display: none; }
 .overlay .menu-panel button.link-btn {
   display: block; margin: 2px auto 10px; background: none; border: none; padding: 0;
   color: var(--text-faint); font-size: 12px; font-weight: 400; text-decoration: underline;

@@ -1217,12 +1217,17 @@
     updateCursor();
   }
 
-  // join-form wiring
+  // join-form wiring. Two-step flow: a PICKER of three actions (PLAY/CREATE/
+  // JOIN, always visible along with BACK), then a per-action STEP that asks
+  // for only what that action needs -- NAME is shared by all three but lives
+  // in ONE dom node relocated into whichever step is active, so a name typed
+  // under one action is still there if you back out and pick another.
   (function initOnlineUI() {
     const scr = document.getElementById("online-screen");
     const urlEl = document.getElementById("online-url");
     const roomEl = document.getElementById("online-room");
     const nameEl = document.getElementById("online-name");
+    const nameRow = document.getElementById("online-name-row");
     const statusEl = document.getElementById("online-status");
     if (!scr || !urlEl) return; // headless/no-DOM guard
     // the live server — PLAY needs no typing; the SERVER field stays tucked
@@ -1230,8 +1235,9 @@
     const DEFAULT_SERVER = "wss://scrapyard-derby.onrender.com";
     const urlRow = document.getElementById("online-url-row");
     const advBtn = document.getElementById("online-advanced-btn");
-    const friendsRow = document.getElementById("online-friends");
-    const friendsBtn = document.getElementById("online-friends-btn");
+    const pickerEl = document.getElementById("online-picker");
+    const steps = { play: document.getElementById("online-step-play"),
+      create: document.getElementById("online-step-create"), join: document.getElementById("online-step-join") };
     const params = (typeof URLSearchParams !== "undefined")
       ? new URLSearchParams((typeof location !== "undefined" && location.search) || "")
       : { get: () => null };
@@ -1241,19 +1247,39 @@
       urlEl.value = override || DEFAULT_SERVER;
       if (override && urlRow) urlRow.classList.remove("hidden"); // a real override → show it, skip "advanced"
       else if (advBtn) advBtn.addEventListener("click", () => { urlRow.classList.remove("hidden"); advBtn.classList.add("hidden"); urlEl.focus(); });
-      const savedRoom = params.get("room") || localStorage.getItem("sd_room") || "";
-      roomEl.value = savedRoom;
-      if (savedRoom && friendsRow) friendsRow.classList.remove("hidden"); // a remembered join code → show it, skip the toggle
-      else if (friendsBtn) friendsBtn.addEventListener("click", () => { friendsRow.classList.remove("hidden"); friendsBtn.classList.add("hidden"); });
+      roomEl.value = params.get("room") || localStorage.getItem("sd_room") || "";
       nameEl.value = localStorage.getItem("sd_name") || "";
     } catch (_) {}
     const setStatus = (t, cls) => { if (statusEl) { statusEl.textContent = t || ""; statusEl.className = cls || ""; } };
-    const formEl = document.getElementById("online-form");
     const inviteEl = document.getElementById("online-invite");
-    const openOnline = () => {
-      document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); setStatus("", "");
-      if (formEl) formEl.classList.remove("hidden"); // reset from any prior CREATE (invite-only) state
+    let step = "picker"; // "picker" | "play" | "create" | "join" | "invite"
+    // show just the picker (the 3 action buttons + advanced link); used on
+    // open and as the BACK target from any step
+    const showPicker = () => {
+      step = "picker";
+      pickerEl.classList.remove("hidden");
+      for (const k in steps) steps[k].classList.add("hidden");
+      nameRow.classList.add("hidden");
       if (inviteEl) inviteEl.classList.add("hidden");
+      setStatus("", "");
+    };
+    // enter one action's step: hide the picker, relocate the shared NAME
+    // field into that step (right before its confirm button) since name is
+    // asked for last, and focus the first empty field
+    const showStep = (which) => {
+      step = which;
+      pickerEl.classList.add("hidden");
+      for (const k in steps) steps[k].classList.toggle("hidden", k !== which);
+      const target = steps[which];
+      const confirmBtn = target.querySelector("button");
+      target.insertBefore(nameRow, confirmBtn);
+      nameRow.classList.remove("hidden");
+      setStatus("", "");
+      if (which === "join" && !roomEl.value) roomEl.focus(); else nameEl.focus();
+    };
+    const openOnline = () => {
+      document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden");
+      showPicker(); // reset from any prior step/invite state
     };
     // client-side input sanitizing (defense-in-depth; the server re-validates
     // everything authoritatively). Mirrors the server's rules so the UI shows
@@ -1290,7 +1316,6 @@
       arena.playerName = name;
       const seat = build(name);
       if (!seat) return;
-      if (inviteEl) inviteEl.classList.add("hidden");
       // a saved (or url-param) address that isn't the live default gets ONE
       // chance; if it can't be reached we fall back automatically (see
       // net.onState below) instead of silently re-showing a dead address
@@ -1321,8 +1346,11 @@
     // rendered via textContent, never innerHTML)
     const showInvite = (code) => {
       if (!inviteEl) { enterOnline(); return; }
+      step = "invite";
       document.getElementById("start-screen").classList.add("hidden"); scr.classList.remove("hidden"); // ensure the code is visible
-      if (formEl) formEl.classList.add("hidden"); // the host is committed now — drop PLAY/CREATE/JOIN so the code fits without scrolling
+      pickerEl.classList.add("hidden");
+      for (const k in steps) steps[k].classList.add("hidden");
+      nameRow.classList.add("hidden");
       inviteEl.textContent = "";
       const lbl = document.createElement("div"); lbl.className = "invite-code"; lbl.textContent = "INVITE CODE:  " + code;
       const sub = document.createElement("div"); sub.className = "invite-sub"; sub.textContent = "share it with friends, then start";
@@ -1349,12 +1377,23 @@
     const onlineBtn = document.getElementById("start-online-btn");
     if (onlineBtn) onlineBtn.addEventListener("click", () => { game.audio.unlock(); openOnline(); });
     const bind = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener("click", fn); };
-    bind("online-play-btn", doPlay);
-    bind("online-create-btn", doCreate);
-    bind("online-join-btn", doJoin);
-    if (roomEl) roomEl.addEventListener("keydown", (e) => { if (e.key === "Enter") doJoin(); });
+    // picker buttons only REVEAL a step (name is asked for last); the step's
+    // own button performs the actual action
+    bind("online-play-btn", () => showStep("play"));
+    bind("online-create-btn", () => showStep("create"));
+    bind("online-joinpick-btn", () => showStep("join"));
+    bind("online-play-confirm-btn", doPlay);
+    bind("online-create-confirm-btn", doCreate);
+    bind("online-join-confirm-btn", doJoin);
+    const confirmForStep = () => { if (step === "play") doPlay(); else if (step === "create") doCreate(); else if (step === "join") doJoin(); };
+    nameEl.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmForStep(); });
+    if (roomEl) roomEl.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmForStep(); });
     const backBtn = document.getElementById("online-back-btn");
-    if (backBtn) backBtn.addEventListener("click", () => { net.close(); if (inviteEl) inviteEl.classList.add("hidden"); if (formEl) formEl.classList.remove("hidden"); scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden"); });
+    if (backBtn) backBtn.addEventListener("click", () => {
+      if (step !== "picker") { showPicker(); return; } // step back one level first
+      net.close();
+      scr.classList.add("hidden"); document.getElementById("start-screen").classList.remove("hidden");
+    });
     // dev/preview: ?connect=ws://host[&room=CODE][&name=X] → auto-seat on load
     // (room present → join that code; absent → quick match)
     const auto = params.get("connect");

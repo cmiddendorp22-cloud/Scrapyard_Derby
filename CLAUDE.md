@@ -539,6 +539,92 @@ cascade bug that text-only testing never would.
   run + hosting. NEXT (M1 client): browser "online" mode — connect, stream local
   input, and RENDER server snapshots (stop local simming); then M2 interpolation.
   The M0 N-player refactor is what made the server a ~0-rewrite drop-in.
+- **2026-08-02** — PLAY ONLINE redesigned as a two-step picker/step flow
+  (user: show PLAY (QUICK MATCH)/CREATE PRIVATE GAME/JOIN WITH CODE/BACK by
+  default, reveal the rest on click, ask for NAME last). `#online-picker`
+  now holds just the 4 always-visible actions (+ the "advanced" server
+  link); clicking PLAY/CREATE/JOIN reveals a dedicated `#online-step-*`
+  asking for only what that action needs, with a confirm button of the same
+  label. NAME lives in ONE shared `#online-name-row` node physically
+  relocated (`insertBefore`, not copied) into whichever step is active, so
+  a name typed under one action is still there if you back out and pick
+  another; JOIN's step shows CODE above NAME since code is the new fact
+  there. BACK is now stateful: from a step it returns to the picker; from
+  the picker it exits online mode (one button, nested back). Replaces the
+  prior "advanced"/"play with friends" collapsible-links design below.
+  Verified: an 8-check state-machine test (step entry, name-field
+  relocation + persistence across steps, correct auto-focus target per
+  step, nested BACK) + a 5-check full functional pass (real PLAY/CREATE+
+  invite/JOIN through the new flow, the stale-server self-heal fix still
+  works, mobile-landscape fit with ~0 overflow on the tallest reachable
+  state) all green; desktop + mobile screenshots confirm every state.
+- **2026-08-02** — Cleanup pass on the online/multiplayer code (user: "get
+  rid of anything not being used") + first UI minimization (CREATE/JOIN
+  collapsed behind a "play with friends" link, later superseded by the
+  picker/step redesign above). Confirmed-dead code removed: `NetClient`'s
+  `arena`/`view`/`roomPublic` fields (stored from every `welcome`, never
+  read) and its unused `get online()` getter; the server's `welcome`
+  payload trimmed from 6 fields to the 2 actually used (`id`, `room`); 
+  `ARENA`/`VIEW` dropped from the `sim-host.js` bridge (server.js was their
+  only consumer); a redundant CSS font-size and an unreachable
+  `#online-status.ok` rule (`setStatus` never passes `"ok"`). Caught and
+  fixed a real breakage this surfaced: `test-client.js` read the
+  now-removed `msg.arena.w/h` in its welcome log line — would have thrown
+  on the next run. Verified: full functional regression + all 3 server
+  test scripts green; the live Render deploy polled until the trimmed
+  protocol was confirmed running in production.
+- **2026-08-02** — Fixed a real bug found via user report + a live browser
+  screenshot: a browser that had once used a self-hosted/test server (e.g.
+  an old Cloudflare tunnel from local dev) kept resurfacing that dead
+  address as the "remembered" server on every future visit — any saved
+  value differing from the live default was treated as a deliberate
+  advanced choice, so once that old tunnel died, PLAY silently failed
+  forever with no way back short of manually editing the field or clearing
+  site storage. `connectWith` now tracks when a connection targets a
+  non-default (saved/typed) address; if it errors as unreachable,
+  `resetToDefaultServer()` clears the bad localStorage entry, restores the
+  live default, re-hides the field behind "advanced", and tells the player
+  to press PLAY again. A server that's merely reachable-but-rejecting
+  (wrong room code, full room) is untouched — only unreachable addresses
+  heal. Verified: reproduced the exact bug (stale tunnel URL surfaces +
+  fails), confirmed the heal + successful retry, confirmed fresh browsers
+  with nothing saved are unaffected.
+- **2026-08-02** — Mobile-layout fix for PLAY ONLINE: the screen (built the
+  prior session) had never been added to the game's short-landscape-phone
+  compaction pass, so at ~390px viewport height the panel overflowed and
+  JOIN WITH CODE/BACK were unreachable. Added scoped `#online-screen`
+  compaction to the existing `max-height: 500px` media block. Also found:
+  right after CREATE, the invite-code card was correctly added to the DOM
+  and unhidden, but sat below the fold of the (already-scrollable) panel —
+  reachable by scroll, but not what a host on a short phone should have to
+  do. Wrapped PLAY/CREATE/JOIN in `#online-form` (`display: contents` so it
+  doesn't disturb the panel's flex gap) and hid it once an invite code
+  shows, structurally fixing the height instead of relying on scroll.
+  Verified end-to-end against the live Netlify+Render deployment: quickplay
+  correctly joins an EXISTING public room instead of always creating a new
+  one (matching room codes + each player's own snapshot listing the other),
+  CREATE+JOIN WITH CODE reach the same private room, desktop + compacted
+  mobile layouts both render with no overflow.
+- **2026-08-02** — Removed the unused `render.yaml` Blueprint config from the
+  repo root. The actual deployed server uses the root `Dockerfile` via a
+  manually-created Render Web Service, not this Blueprint (different
+  runtime: node+rootDir vs Docker) — leaving it risked creating a second,
+  inconsistent service if `render.yaml`'s Blueprint flow were ever used.
+- **2026-08-02** — Keep-warm GitHub Action (`.github/workflows/keep-warm.yml`):
+  pings the deployed Render health URL every 10 minutes so the free tier's
+  ~15-min idle sleep never triggers (avoids the ~30-60s cold start on the
+  next player's connect). No-ops until the repo's `KEEPALIVE_URL` Actions
+  variable is set to the live server URL, so it's safe to merge pre-deploy;
+  a manual `workflow_dispatch` run lets it be tested immediately after.
+- **2026-08-02** — Deployed the multiplayer server to Render (free tier, no
+  card) via the existing root Dockerfile through a manually-created Web
+  Service, and wired the live URL (`wss://scrapyard-derby.onrender.com`) in
+  as the client's `DEFAULT_SERVER` — the SERVER field is hidden by default
+  (tucked behind "advanced: use a different server") so PLAY needs no
+  typing. Verified live in production three ways before wiring it in: an
+  HTTP health check, a raw WebSocket quickplay/room test, and a real
+  click-path test driving the actual UI (no dev hooks) through to a
+  rendered shared world.
 - **2026-07-11** — MULTIPLAYER: MULTI-ROOM server + matchmaking + invite codes
   (agar/diep-style; user: "press play and join a server, plus invite codes for
   friends, max player count, free + external, low lag"). The server now hosts
