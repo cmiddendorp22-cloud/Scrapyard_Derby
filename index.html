@@ -45,13 +45,15 @@
         </div>
         <button id="online-advanced-btn" class="link-btn">advanced: use a different server</button>
         <button id="online-play-btn">PLAY (QUICK MATCH)</button>
-        <div class="online-sep">or play with friends</div>
-        <button id="online-create-btn">CREATE PRIVATE GAME</button>
-        <div class="options-row">
-          <label for="online-room">JOIN CODE</label>
-          <input type="text" id="online-room" placeholder="e.g. K7M2P" autocomplete="off" spellcheck="false" maxlength="5">
+        <button id="online-friends-btn" class="link-btn">play with friends: create or join a private game</button>
+        <div id="online-friends" class="hidden">
+          <button id="online-create-btn">CREATE PRIVATE GAME</button>
+          <div class="options-row">
+            <label for="online-room">JOIN CODE</label>
+            <input type="text" id="online-room" placeholder="e.g. K7M2P" autocomplete="off" spellcheck="false" maxlength="5">
+          </div>
+          <button id="online-join-btn">JOIN WITH CODE</button>
         </div>
-        <button id="online-join-btn">JOIN WITH CODE</button>
       </div>
       <div id="online-invite" class="hidden"></div>
       <div id="online-status"></div>

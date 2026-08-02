@@ -14,8 +14,6 @@ class NetClient {
     this.state = "idle";     // idle | connecting | joined | rejected | error | closed
     this.reason = "";
     this.selfId = null;
-    this.arena = null;       // {w,h,wall} from welcome
-    this.view = null;        // {w,h}
     this.snap = null;        // latest {type:"snap", ...}
     this.onState = null;     // callback(state, reason) for the UI
     this._carCache = new Map(); // netId → Car (reused across snapshots)
@@ -29,7 +27,7 @@ class NetClient {
   connect(url, seatMsg) {
     this.close();
     this.selfId = null; this.snap = null; this._carCache.clear(); this._buf.length = 0; this.lastSnapAt = 0;
-    this.inputSeq = 0; this.pending.length = 0; this.roomCode = null; this.roomPublic = null;
+    this.inputSeq = 0; this.pending.length = 0; this.roomCode = null;
     this._set("connecting", "");
     if (typeof WebSocket === "undefined") { this._set("error", "no WebSocket in this browser"); return; }
     let ws;
@@ -38,7 +36,7 @@ class NetClient {
     ws.onopen = () => { try { ws.send(JSON.stringify(seatMsg)); } catch (_) {} };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
-      if (m.type === "welcome") { this.selfId = m.id; this.arena = m.arena; this.view = m.view; this.roomCode = m.room || null; this.roomPublic = !!m.pub; this._set("joined", ""); }
+      if (m.type === "welcome") { this.selfId = m.id; this.roomCode = m.room || null; this._set("joined", ""); }
       else if (m.type === "reject") { this.reason = m.reason || "rejected"; this._set("rejected", this.reason); }
       else if (m.type === "snap") {
         this.snap = m;
@@ -63,7 +61,6 @@ class NetClient {
   close() {
     if (this.ws) { try { this.ws.onclose = null; this.ws.onerror = null; this.ws.close(); } catch (_) {} this.ws = null; }
   }
-  get online() { return this.state === "joined"; }
   _set(state, reason) { this.state = state; this.reason = reason || ""; if (this.onState) this.onState(state, this.reason); }
 
   // -- M2 interpolation: sample every car + the boss at render time `rt` (a

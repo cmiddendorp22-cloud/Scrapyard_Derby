@@ -191,7 +191,7 @@ here blocks it.
   ability, autoFire, aim}` (`seq` is a monotonic input id for
   prediction/reconciliation), plus `{type:"spendStat", name}`,
   `{type:"respawn", weapon}`, and `{type:"name", name}`.
-- Server → client: `{type:"welcome", id, room, pub, max, arena, view}` on seat
+- Server → client: `{type:"welcome", id, room}` on seat
   (or `{type:"reject", reason}` + close), then `{type:"snap", self, cars,
   bullets, mines, boss, scrap, crates, drops}` ~20 Hz for THAT room. Each car
   has id/x/y/heading/hp/name/level/weapon; the receiving client's OWN car also

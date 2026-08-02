@@ -72,7 +72,7 @@ for (const m of html.matchAll(/<script src="([^"]+)"><\/script>/g)) {
 
 // --- bridge the symbols the server needs out of the context's lexical scope ---
 vm.runInContext(
-  "globalThis.__sim = { ArenaGame, ArenaPlayer, Car, ARENA, VIEW, RNG, setSimRandom, readDrive };",
+  "globalThis.__sim = { ArenaGame, ArenaPlayer, Car, RNG, setSimRandom, readDrive };",
   sandbox, { filename: "sim-bridge" }
 );
 const sim = sandbox.__sim;

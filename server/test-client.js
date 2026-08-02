@@ -19,7 +19,7 @@ ws.on("open", () => {
 
 ws.on("message", (data) => {
   const msg = JSON.parse(data);
-  if (msg.type === "welcome") { selfId = msg.id; console.log("welcome: id", selfId, "arena", msg.arena.w + "x" + msg.arena.h); return; }
+  if (msg.type === "welcome") { selfId = msg.id; console.log("welcome: id", selfId, "room", msg.room); return; }
   if (msg.type === "snap") {
     snaps++; lastSnap = msg;
     const me = msg.cars.find((c) => c.id === selfId);

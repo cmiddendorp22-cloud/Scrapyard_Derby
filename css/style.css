@@ -894,26 +894,27 @@ body.touch-mode #spectate-ui { top: 8px; }
   color: var(--warn);
   text-align: center;
 }
-#online-status.ok { color: var(--heal); }
 #online-status.err { color: var(--danger); }
-/* PLAY ONLINE: primary quick-match button + private-game divider + invite card */
-#online-play-btn { background: var(--danger); color: #fff; font-size: 17px; }
-.online-sep {
-  text-align: center; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
-  color: var(--text-faint); margin: 10px 0 4px; opacity: 0.85;
-}
+/* PLAY ONLINE: primary quick-match button + invite card */
+#online-play-btn { background: var(--danger); color: #fff; }
 #online-invite {
   text-align: center; padding: 12px; margin: 4px 0;
   border: 1px solid var(--accent); border-radius: 8px; background: rgba(0,0,0,0.25);
 }
 #online-invite.hidden { display: none; }
 /* transparent to the panel's flex layout when visible (children act as direct
-   flex items, keeping the gap spacing) so wrapping the form for show/hide
-   doesn't disturb its look; a real box only while explicitly hidden */
+   flex items, keeping the gap spacing) so wrapping a section for show/hide
+   doesn't disturb its look; a real box only while explicitly hidden.
+   #online-form = the whole form (hidden once an invite code is shown);
+   #online-friends = CREATE/JOIN, tucked away by default like "advanced" so
+   the default view is just NAME + PLAY (minimal, one hero action). */
 #online-form { display: contents; }
 #online-form.hidden { display: none; }
+#online-friends { display: contents; }
+#online-friends.hidden { display: none; }
 #online-url-row.hidden { display: none; }
 #online-advanced-btn.hidden { display: none; }
+#online-friends-btn.hidden { display: none; }
 .overlay .menu-panel button.link-btn {
   display: block; margin: 2px auto 10px; background: none; border: none; padding: 0;
   color: var(--text-faint); font-size: 12px; font-weight: 400; text-decoration: underline;
@@ -1195,16 +1196,15 @@ button.option-toggle:hover { filter: brightness(1.1); }
   #touch-ability2 { width: 54px; height: 54px; right: 178px; bottom: 22px; }
   /* side SHOP button: up and compact, clear of the FIRE/DRIFT cluster */
   #shop-toggle { top: 20%; transform: none; padding: 8px 10px; font-size: 11px; }
-  /* PLAY ONLINE: this screen has more rows than a typical menu (2 buttons +
-     2 fields + a divider + advanced-toggle), so it needs its own tighter
-     panel spacing on top of the generic compaction above to fit without
-     scrolling on a short landscape phone. */
-  #online-screen .menu-panel { gap: 3px; padding: 8px 24px 10px; }
-  #online-screen h1 { margin: 0 0 2px; font-size: 22px; }
+  /* PLAY ONLINE: the expanded "play with friends" state can still stack more
+     rows than a typical menu, so it needs its own tighter panel spacing on
+     top of the generic compaction above to fit without scrolling on a short
+     landscape phone. */
+  #online-screen .menu-panel { gap: 1px; padding: 5px 24px 6px; }
+  #online-screen h1 { margin: 0 0 1px; font-size: 19px; }
   #online-screen .options-row { margin-bottom: 0; gap: 6px; }
-  #online-screen .options-row input[type="text"] { padding: 5px 10px; }
-  #online-screen button { margin-top: 4px; padding: 7px 18px; font-size: 12px; }
-  .online-sep { margin: 2px 0 0; font-size: 9px; }
+  #online-screen .options-row input[type="text"] { padding: 3px 10px; }
+  #online-screen button { margin-top: 2px; padding: 5px 16px; font-size: 12px; }
   .link-btn { margin: 0 auto 0; font-size: 10px; }
   #online-invite { padding: 6px; margin: 0; }
   #online-invite .invite-code { font-size: 15px; letter-spacing: 2px; }

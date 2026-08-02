@@ -236,8 +236,7 @@ wss.on("connection", (ws, req) => {
       player = addPlayerToWorld(room.world, msg.name);
       myRoom = room; room.clients.add(ws); room.emptySince = 0;
       clients.set(ws, { room, player });
-      safeSend(ws, { type: "welcome", id: player.netId, room: room.code, pub: room.isPublic, max: room.maxPlayers,
-        arena: { w: sim.ARENA.w, h: sim.ARENA.h, wall: sim.ARENA.wall }, view: { w: sim.VIEW.w, h: sim.VIEW.h } });
+      safeSend(ws, { type: "welcome", id: player.netId, room: room.code }); // id/room are the only fields the client uses
       console.log("+ player", player.netId, "\"" + player.name + "\"", (msg.type) + " →", room.code, "(", room.clients.size, "in room /", rooms.size, "rooms )");
       return;
     }

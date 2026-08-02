@@ -1230,6 +1230,8 @@
     const DEFAULT_SERVER = "wss://scrapyard-derby.onrender.com";
     const urlRow = document.getElementById("online-url-row");
     const advBtn = document.getElementById("online-advanced-btn");
+    const friendsRow = document.getElementById("online-friends");
+    const friendsBtn = document.getElementById("online-friends-btn");
     const params = (typeof URLSearchParams !== "undefined")
       ? new URLSearchParams((typeof location !== "undefined" && location.search) || "")
       : { get: () => null };
@@ -1239,7 +1241,10 @@
       urlEl.value = override || DEFAULT_SERVER;
       if (override && urlRow) urlRow.classList.remove("hidden"); // a real override → show it, skip "advanced"
       else if (advBtn) advBtn.addEventListener("click", () => { urlRow.classList.remove("hidden"); advBtn.classList.add("hidden"); urlEl.focus(); });
-      roomEl.value = params.get("room") || localStorage.getItem("sd_room") || "";
+      const savedRoom = params.get("room") || localStorage.getItem("sd_room") || "";
+      roomEl.value = savedRoom;
+      if (savedRoom && friendsRow) friendsRow.classList.remove("hidden"); // a remembered join code → show it, skip the toggle
+      else if (friendsBtn) friendsBtn.addEventListener("click", () => { friendsRow.classList.remove("hidden"); friendsBtn.classList.add("hidden"); });
       nameEl.value = localStorage.getItem("sd_name") || "";
     } catch (_) {}
     const setStatus = (t, cls) => { if (statusEl) { statusEl.textContent = t || ""; statusEl.className = cls || ""; } };
